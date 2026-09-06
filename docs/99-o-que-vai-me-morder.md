@@ -184,3 +184,54 @@ parar.
 
 **Sai daqui quando:** existir algum estado em que o personagem é largado para a física,
 e aí o material tiver que voltar a ter atrito nesse estado.
+
+## 11. O PhysX não segura pilha solta acima de ~6 camadas
+
+**Estado:** medido em 06/09/2026, e é um limite da stack, não do meu teste.
+
+Quatro proporções de pilha de 150 caixas 1×1 foram simuladas até dormirem. O critério é
+`max_desloc_u`: quanto a caixa mais deslocada andou, **sem ninguém encostar nela**.
+
+| forma | camadas | `max_desloc_u` | dormiu em | veredito |
+|---|---|---|---|---|
+| 5×5×6 | 6 | **0.1447** | 3.00 s | fica de pé |
+| 5×3×10 | 10 | 21.1541 | 21.78 s | desaba sozinha |
+| 5×2×15 (incl. 0.02) | 15 | 24.6038 | 13.36 s | desaba sozinha |
+| 5×2×15 (incl. 0.10) | 15 | 3057.9190 | não dormiu | desaba, e **3 caixas voam** |
+
+O corte está na **altura**, não na largura nem na inclinação. Acima de ~6 camadas o
+solver do PhysX com `solverIterations` padrão não segura corpos soltos empilhados: o erro
+de cada micro-impacto acumula e a pilha se desmancha. Numa das corridas três caixas foram
+ejetadas a 3 km.
+
+**Por que isso importa para o briefing:** "pilha instável" com 150 corpos é o cenário de
+carga do teste mínimo. Se a stack não consegue manter uma pilha alta parada, o cenário
+de carga tem que ser largo e baixo — e um cenário largo e baixo é justamente o que **um
+jogador não consegue derrubar** (medido: 280 N·s, o momento de 70 kg a 4 u/s, moveu 0 de
+150 caixas). As duas coisas juntas apertam o desenho do soak.
+
+**O que ainda não foi tentado:** subir `Rigidbody.solverIterations`. Não foi mexido de
+propósito — os números acima valem para a configuração **padrão**, que é a única base
+justa para comparar com a candidata C. Tunar o solver da B e não da C inventaria uma
+vitória.
+
+**Sai daqui quando:** a candidata C (Godot) rodar o mesmo teste e a tabela tiver as duas
+colunas. Detalhe do processo em `tasks/FSLOP-1/errors/03`.
+
+## 12. Um jogador sozinho não derruba a pilha
+
+**Estado:** medido, e muda o desenho do soak.
+
+Um empurrão de **280 N·s** — exatamente o momento que a cápsula de 70 kg carrega a 4 u/s,
+ou seja, o máximo que um jogador consegue entregar correndo — moveu **0 de 150 caixas**
+mais de 0.5 u. A pilha de 1.500 kg absorve o impacto e volta a dormir em 2.44 s.
+
+Isso não é bug: é o que acontece quando 150 caixas de 10 kg estão empacotadas. Mas tem
+consequência direta no soak: **inputs scriptados que só esbarram na pilha vão medir banda
+de pilha dormindo**, e o `docs/00-contrato-de-medicao.md` avisa que média de banda com
+`bodies_awake` baixo não significa nada.
+
+**Sai daqui quando:** a change 09 definir o gatilho de carga do soak. As saídas conhecidas
+são: os 4 jogadores empurrarem juntos, largar a viga de 6 m em cima da pilha, ou a pilha
+nascer no ar e cair durante a corrida. Nenhuma foi escolhida — e a última é a única que
+não depende de nada que ainda não existe.
