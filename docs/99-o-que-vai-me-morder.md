@@ -31,7 +31,12 @@ No 480, qualquer pessoa que adivinhe o código de sala entra, e o Steam não iso
 build. Serve para teste; não serve para lançamento.
 
 **Sai daqui quando:** houver AppID próprio (US$ 100 no Steamworks). O AppID está numa
-constante única, então é troca de uma linha. Detalhe em `decisions/02`.
+constante única (`SteamLobbyService.SpikeAppId`), então é troca de uma linha.
+Detalhe em `decisions/02`.
+
+**Atualizado em 06/09 (change 06):** exercitado de verdade — lobby criado como
+`FriendsOnly`, e não `Public`, exatamente para não entrar na lista pública compartilhada
+do 480. A entrada é por código derivado do SteamID, sem varrer lista nenhuma.
 
 ## 3. A VRAM da máquina de referência não foi apurada
 
@@ -112,11 +117,18 @@ nada (o UPM instala pela tag), mas a versão que o Unity mostra **não** é a in
 
 **Atualizado no mesmo dia, ao instalar (change 02):** ele **compila limpo** —
 `Assembly-CSharp.dll`, 0 `error CS`, com `FishySteamworks` referenciando
-`FishNet.Transporting`. A deriva de 2 anos não quebrou a compilação. Se quebra em
-runtime, quem responde é a change 06 (lobby). O item continua aberto por isso.
+`FishNet.Transporting`. A deriva de 2 anos não quebrou a compilação.
 
-**Sai daqui quando:** o lobby Steam da change 06 subir e fechar conexão de verdade.
-Detalhe em `tasks/FSLOP-1/decisions/06`.
+**Atualizado em 06/09 (change 06):** o lobby subiu, e o transporte **continua sem
+resposta**. A Steam inicializa contra o AppID 480 de dentro do editor headless, um lobby
+de 4 lugares é criado nos servidores da Valve em 300 ms, o código de entrada funciona e
+entrar por ele responde em 350 ms. **Nada disso passa pelo FishySteamworks:** lobby é
+matchmaking, transporte é socket. Nenhum byte trafegou por ele ainda.
+
+**Sai daqui quando:** o transporte abrir um socket e fechar conexão de verdade. Isso
+esbarra no item 1 desta lista — duas instâncias nesta máquina têm o mesmo SteamID e não
+formam P2P —, então a prova provavelmente exige a 2ª máquina. Detalhe em
+`tasks/FSLOP-1/decisions/06` e `changes/06`.
 
 ## 7b. O transporte da candidata B não é dependência versionada
 
@@ -235,3 +247,25 @@ de pilha dormindo**, e o `docs/00-contrato-de-medicao.md` avisa que média de ba
 são: os 4 jogadores empurrarem juntos, largar a viga de 6 m em cima da pilha, ou a pilha
 nascer no ar e cair durante a corrida. Nenhuma foi escolhida — e a última é a única que
 não depende de nada que ainda não existe.
+
+## 13. O código de sala depende de um detalhe interno do SteamID
+
+**Estado:** funcionando e vigiado, não resolvido.
+
+O código de entrada (7 dígitos, ex. `3JJ-S8QT`) carrega só os 32 bits de `accountID` do
+lobby e **remonta** o resto do `CSteamID` na leitura — universo, tipo de conta e os bits
+de instância. Esse último é `0x60000`, e é um detalhe interno da Valve: o nome óbvio do
+SDK, `k_EChatInstanceFlagLobby`, vale `0x40000` e **está errado** para lobby de
+matchmaking, que carrega também o flag `MMSLobby` (`errors/04`).
+
+Se a Valve mudar isso, os códigos param de levar a lobby nenhum — **sem erro, sem
+exceção, sem log**: o código é gerado, ditado por telefone e simplesmente não abre nada.
+
+**A defesa está montada:** a `SteamLobbyProbe` confere o ida-e-volta contra o `id64` real
+em toda corrida, e imprime a instância observada quando falha. Não some o risco; garante
+que ele apareça no CI e não na mão do jogador.
+
+**Sai daqui quando:** o código passar a carregar os 64 bits inteiros (13 dígitos em vez
+de 7) — o que troca robustez por um código que ninguém dita por voz. É escolha, e não foi
+feita.
+
