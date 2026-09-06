@@ -53,18 +53,33 @@ monitor local. O `[SOAK-META]` **não tem campo para isso hoje**.
 **Sai daqui quando:** o contrato ganhar um campo `display=local|parsec` e a emissão nas
 stacks preenchê-lo. Antes da primeira medição de fps que conte como resultado.
 
-## 5. A abordagem de agarre da viga não está escolhida — e não é minha para escolher
+## 5. O agarre da viga está escolhido, e ainda não foi medido
 
-**Estado:** deliberadamente aberto. É o único item desta lista que é **design**.
+**Estado:** decidido em 06/09/2026, **zero medição**.
 
-Joint entre um corpo predito no cliente e um corpo replicado do host liga dois relógios
-diferentes. As três saídas conhecidas (suspender a predição durante o agarre; predizer
-o par e reconciliar; agarre cinemático em grid) trocam responsividade por estabilidade
-em proporções diferentes, e o briefing diz: *"Se uma decisão depender de julgamento
-sobre o que é divertido: PARE e me pergunte. Você não decide design."*
+Este item era "não está escolhido, e não é meu para escolher". Mudou: em 06/09 o usuário
+delegou explicitamente a escolha, e a decisão está em `tasks/FSLOP-1/decisions/09` —
+**agarre por mola de mão única**, com a viga simulada só no host, joint elástico criado só
+no host e **nenhum joint no cliente**. Foi o próprio usuário quem abriu essa saída, ao
+perguntar se os personagens não poderiam simplesmente aplicar forças sobre a viga; ela não
+estava entre as três que eu tinha levantado.
 
-**Sai daqui quando:** a change 08 medir as três na stack B e o usuário escolher com os
-números na mão.
+Por que funciona, em uma frase: um agarre mole **já atrasa a viga em relação à mão mesmo
+em jogo local**, e o atraso da rede se esconde dentro do atraso da física — sem predizer a
+viga, sem reconciliá-la, e sem alterar nenhuma restrição do briefing.
+
+**O que continua devendo:**
+
+- **nenhum número.** Nenhuma viga existe, nenhum joint foi criado, nenhuma corrida mediu
+  `carry_jump_u`. A decisão diz por onde começar;
+- a mola quase não puxa o jogador de volta — ele não é arrastado nem levantado pela viga.
+  Quanto de retorno é bom é número de sensação, e está no item 9;
+- sobra um acoplamento que a escolha não remove: o personagem **predito** colide com a
+  viga **replicada**. É a mesma situação das 150 caixas, que o briefing já aceita.
+
+**Sai daqui quando:** a change 08 medir as quatro abordagens na stack B e a escolhida
+fechar `carry_jump_u ≤ 0.5` com `input_ms_p99 ≤ 100`. Se não fechar, o degrau seguinte já
+está escrito em `decisions/09`.
 
 ## 6. A camada de rede da candidata C não está escolhida
 
