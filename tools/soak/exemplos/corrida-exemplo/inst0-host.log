@@ -1,0 +1,8 @@
+[SOAK-META] run=exemplo01 stack=B role=host id=0 pid=13240 build=0000000 engine=6000.6.0f1 transport=local rtt_ms=150 loss_pct=3.0 bodies=150 started=2026-09-06T03:00:00Z
+[SOAK-EV] t=0.412 tick=0 role=host id=0 ev=lobby_created lobby=109775241012345678 code=K7QX2M
+[SOAK-EV] t=1.980 tick=118 role=host id=0 ev=spawn_done bodies=150
+[SOAK] t=298.000 tick=17880 role=host id=0 fps=62.0 frame_p99_ms=15.10 rx_KBps=12.4 tx_KBps=54.9 drift_max_u=-1 drift_p99_u=-1 carry_jump_u=0.018 input_ms_p99=-1 bodies_awake=8 world_hash=a1b2c3d4
+[SOAK] t=299.000 tick=17940 role=host id=0 fps=61.4 frame_p99_ms=15.80 rx_KBps=12.6 tx_KBps=57.1 drift_max_u=-1 drift_p99_u=-1 carry_jump_u=0.021 input_ms_p99=-1 bodies_awake=11 world_hash=b2c3d4e5
+[SOAK] t=300.000 tick=18000 role=host id=0 fps=60.9 frame_p99_ms=16.20 rx_KBps=12.5 tx_KBps=88.3 drift_max_u=-1 drift_p99_u=-1 carry_jump_u=0.024 input_ms_p99=-1 bodies_awake=63 world_hash=c3d4e5f6
+[SOAK] t=301.000 tick=18060 role=host id=0 fps=61.8 frame_p99_ms=15.40 rx_KBps=12.4 tx_KBps=51.2 drift_max_u=-1 drift_p99_u=-1 carry_jump_u=0.019 input_ms_p99=-1 bodies_awake=9 world_hash=d4e5f6a7
+[SOAK-EV] t=301.500 tick=18090 role=host id=0 ev=host_quit

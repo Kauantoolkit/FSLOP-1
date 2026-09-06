@@ -1,0 +1,54 @@
+# --- Toolchain de terceiro -------------------------------------------------
+# Godot portátil e afins. Binário, não é fonte. O que é fonte é o NÚMERO da
+# versão e a URL, e esses vivem em tools/TOOLCHAIN.md, versionado.
+/tools/godot/
+/tools/**/bin/
+
+# --- Saída de execução -----------------------------------------------------
+# Logs de soak e relatórios gerados. São PROVA de uma corrida, não fonte:
+# quando um número vira entregável, ele é copiado para RESULTADOS.md à mão,
+# com a data e o SHA da corrida ao lado.
+/runs/
+*.soak.log
+
+# --- Unity (spike A e B) ---------------------------------------------------
+# Tudo aqui é gerado e volta sozinho ao abrir o projeto.
+Library/
+Temp/
+Obj/
+obj/
+Logs/
+UserSettings/
+MemoryCaptures/
+Recordings/
+Build/
+Builds/
+.vscode/
+
+# --- Godot (spike C) -------------------------------------------------------
+.godot/
+/spike/C-godot/**/export/
+
+# --- Projetos de IDE -------------------------------------------------------
+# O Unity os regenera a partir de Assets/ e dos Packages; não são fonte.
+*.csproj
+*.sln
+*.slnx
+*.user
+*.userprefs
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.pyc
+
+# --- Steam -----------------------------------------------------------------
+# steam_appid.txt é gerado no lado do build. O AppID de verdade vive em código,
+# numa constante única (decisions/02).
+steam_appid.txt
+
+# --- Sistema ---------------------------------------------------------------
+Thumbs.db
+desktop.ini
+.DS_Store
+Player.log
+Player-prev.log

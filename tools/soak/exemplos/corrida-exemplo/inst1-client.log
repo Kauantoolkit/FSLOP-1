@@ -1,0 +1,8 @@
+[SOAK-META] run=exemplo01 stack=B role=client id=1 pid=13580 build=0000000 engine=6000.6.0f1 transport=local rtt_ms=150 loss_pct=3.0 bodies=150 started=2026-09-06T03:00:00Z
+[SOAK-EV] t=2.140 tick=128 role=client id=1 ev=lobby_joined via=code
+[SOAK-EV] t=300.000 tick=18000 role=client id=1 ev=late_join_done elapsed_ms=812.0 world_hash=c3d4e5f6
+[SOAK] t=298.000 tick=17880 role=client id=1 fps=143.2 frame_p99_ms=8.10 rx_KBps=18.9 tx_KBps=4.1 drift_max_u=0.0210 drift_p99_u=0.0180 carry_jump_u=0.020 input_ms_p99=38.0 bodies_awake=8 world_hash=a1b2c3d4
+[SOAK] t=299.000 tick=17940 role=client id=1 fps=141.0 frame_p99_ms=8.40 rx_KBps=19.4 tx_KBps=4.2 drift_max_u=0.0244 drift_p99_u=0.0201 carry_jump_u=0.023 input_ms_p99=41.0 bodies_awake=11 world_hash=b2c3d4e5
+[SOAK] t=300.000 tick=18000 role=client id=1 fps=139.7 frame_p99_ms=8.90 rx_KBps=31.7 tx_KBps=4.2 drift_max_u=0.0982 drift_p99_u=0.0611 carry_jump_u=0.031 input_ms_p99=44.0 bodies_awake=63 world_hash=c3d4e5f6
+[SOAK] t=301.000 tick=18060 role=client id=1 fps=142.5 frame_p99_ms=8.20 rx_KBps=18.2 tx_KBps=4.1 drift_max_u=0.0225 drift_p99_u=0.0190 carry_jump_u=0.021 input_ms_p99=39.0 bodies_awake=9 world_hash=d4e5f6a7
+[SOAK-EV] t=301.640 tick=18098 role=client id=1 ev=shutdown clean=1 reason=host_lost
