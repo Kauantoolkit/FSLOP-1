@@ -127,3 +127,45 @@ está em `spike/B-unity-fishnet/VERSOES.md`.
 ninguém confundir "o avaliador passa em 20/20" com "a base foi medida".
 
 O avaliador está testado contra logs sintéticos. **Nenhum número de stack real existe.**
+
+Atualizado em 06/09 (`changes/04`): a candidata B já produz número — repouso, marcha e
+pulo da cápsula, medidos pela `SpikePhysicsProbe`. Mas isso é física local em edit mode.
+**Nenhuma linha `[SOAK]` foi emitida por stack nenhuma**, e nenhuma métrica do briefing
+(fps, banda, drift, late join, queda do host) foi medida.
+
+## 9. Os números de sensação da cápsula são placeholder, não escolha
+
+**Estado:** aberto, e é design — não é meu para fechar.
+
+O `CapsuleMotor` tem três números que decidem como o personagem *sente*:
+
+```
+moveSpeed          4 u/s     ANCORADO — docs/00 deriva o limiar de teleporte dele
+jumpHeight         1.2 u     PLACEHOLDER
+acceleration      40 u/s²    PLACEHOLDER
+```
+
+`moveSpeed` não é livre: o limiar de 0.5 u de salto da viga foi justificado a partir de
+"o personagem anda a ~4 u/s". Mudar a velocidade obriga a rever o contrato de medição.
+
+Os outros dois estão ali para a cápsula sair do chão e parar de patinar, não porque
+alguém os escolheu. O briefing diz que eu não decido o que é divertido.
+
+**Sai daqui quando:** o usuário jogar e disser os números — ou disser que não importam
+para o spike, o que também é resposta.
+
+## 10. A cápsula não tem atrito nenhum
+
+**Estado:** aceito enquanto o motor controlar a velocidade todo passo.
+
+`decisions/08` põe material sem atrito na cápsula, porque o atrito padrão do PhysX
+roubava `mu·g·dt = 0.1177 u/s` da velocidade comandada (`errors/01`) e faria a velocidade
+depender da caixa embaixo do pé quando a pilha da change 07 existir.
+
+O preço: **nada freia a cápsula além do próprio motor**. Enquanto ele escreve
+`linearVelocity` a cada passo, isso é invisível. Se ela algum dia ficar sem motor —
+ragdoll, nocaute, cliente que perdeu a conexão e não recebe mais input — ela desliza sem
+parar.
+
+**Sai daqui quando:** existir algum estado em que o personagem é largado para a física,
+e aí o material tiver que voltar a ter atrito nesse estado.

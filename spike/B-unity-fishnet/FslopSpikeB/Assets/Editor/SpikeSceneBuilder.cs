@@ -21,6 +21,9 @@ namespace Fslop.SpikeB.EditorTools
         public const string SceneFolder = "Assets/Scenes";
         public const string ScenePath = SceneFolder + "/SpikeB.unity";
 
+        public const string PhysicsFolder = "Assets/Physics";
+        public const string PlayerMaterialPath = PhysicsFolder + "/PlayerFrictionless.asset";
+
         public const string GroundName = "Ground";
         public const string PlayerName = "Player";
         public const string CameraName = "MainCamera";
@@ -36,11 +39,13 @@ namespace Fslop.SpikeB.EditorTools
         [MenuItem("FSLOP/Gerar cena do spike B")]
         public static void Build()
         {
+            var playerMaterial = CreatePlayerMaterial();
+
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
             CreateGround();
             CreateSun();
-            CreatePlayer();
+            CreatePlayer(playerMaterial);
             CreateCamera();
 
             if (!AssetDatabase.IsValidFolder(SceneFolder))
@@ -60,6 +65,7 @@ namespace Fslop.SpikeB.EditorTools
 
             Log("cena escrita em " + ScenePath);
             Log("raizes=" + scene.rootCount);
+            Log("material do player=" + PlayerMaterialPath);
         }
 
         /// <summary>
@@ -88,11 +94,44 @@ namespace Fslop.SpikeB.EditorTools
         /// chao em y = 0, o repouso teorico do centro e y = 1.0 — esse e o numero que a
         /// sonda confere.
         /// </summary>
-        static void CreatePlayer()
+        /// <summary>
+        /// Material sem atrito para a capsula (decisions/08). O motor ja controla a
+        /// velocidade horizontal por inteiro; o atrito do PhysX e um SEGUNDO controlador
+        /// no mesmo eixo, e mediu-se que ele tira mu*g*dt = 0.6*9.81*0.02 = 0.1177 u/s
+        /// da velocidade comandada a cada passo. Combine Minimum faz o zero da capsula
+        /// vencer o material de qualquer superficie — inclusive as 150 caixas da change
+        /// 07, para a velocidade nao depender de em cima de qual caixa o jogador esta.
+        /// </summary>
+        static PhysicsMaterial CreatePlayerMaterial()
+        {
+            if (!AssetDatabase.IsValidFolder(PhysicsFolder))
+            {
+                AssetDatabase.CreateFolder("Assets", "Physics");
+            }
+
+            var material = new PhysicsMaterial("PlayerFrictionless")
+            {
+                dynamicFriction = 0f,
+                staticFriction = 0f,
+                bounciness = 0f,
+                frictionCombine = PhysicsMaterialCombine.Minimum,
+                bounceCombine = PhysicsMaterialCombine.Minimum,
+            };
+
+            AssetDatabase.DeleteAsset(PlayerMaterialPath);
+            AssetDatabase.CreateAsset(material, PlayerMaterialPath);
+            AssetDatabase.SaveAssets();
+
+            return AssetDatabase.LoadAssetAtPath<PhysicsMaterial>(PlayerMaterialPath);
+        }
+
+        static void CreatePlayer(PhysicsMaterial material)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             go.name = PlayerName;
             go.transform.position = new Vector3(0f, PlayerSpawnHeight, 0f);
+
+            go.GetComponent<CapsuleCollider>().sharedMaterial = material;
 
             var body = go.AddComponent<Rigidbody>();
             body.mass = PlayerMassKg;
@@ -105,6 +144,11 @@ namespace Fslop.SpikeB.EditorTools
             // 5 m a capsula chega a ~9.9 u/s, ~0.2 u por passo de 0.02 s, contra 1.0 u de
             // meia-altura: nao ha tunelamento a evitar. Ligar CCD aqui seria otimizar
             // antes de medir, que o briefing proibe.
+
+            // Motor e controle sao dois componentes porque so o controle desaparece
+            // quando a rede entrar: o cliente remoto tem motor, nao tem teclado.
+            go.AddComponent<CapsuleMotor>();
+            go.AddComponent<CapsuleController>();
         }
 
         static void CreateCamera()
