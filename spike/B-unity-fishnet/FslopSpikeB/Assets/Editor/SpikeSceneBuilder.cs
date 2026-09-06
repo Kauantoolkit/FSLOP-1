@@ -1,0 +1,127 @@
+using System.Globalization;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+
+namespace Fslop.SpikeB.EditorTools
+{
+    /// <summary>
+    /// Gera a cena do spike da candidata B a partir de codigo.
+    ///
+    /// O arquivo .unity versionado e PRODUTO deste script (decisions/07 da task). Editar
+    /// a cena pelo Editor sem portar a alteracao para ca significa perde-la na proxima
+    /// geracao. O motivo e a change 07: 150 corpos precisam nascer em posicao
+    /// deterministica para duas corridas do soak poderem comparar world_hash.
+    ///
+    /// Rodar: Unity.exe -projectPath ... -batchmode -quit -nographics
+    ///        -executeMethod Fslop.SpikeB.EditorTools.SpikeSceneBuilder.Build
+    /// </summary>
+    public static class SpikeSceneBuilder
+    {
+        public const string SceneFolder = "Assets/Scenes";
+        public const string ScenePath = SceneFolder + "/SpikeB.unity";
+
+        public const string GroundName = "Ground";
+        public const string PlayerName = "Player";
+        public const string CameraName = "MainCamera";
+        public const string SunName = "Sun";
+
+        // Medidas em unidades do motor. O contrato de medicao fixa 1 u = 1 m, entao
+        // massa em kg e altura em metros sao a mesma escala e nao ha conversao escondida.
+        const float GroundSide = 40f;
+        const float GroundThickness = 1f;
+        const float PlayerSpawnHeight = 5f;
+        const float PlayerMassKg = 70f;
+
+        [MenuItem("FSLOP/Gerar cena do spike B")]
+        public static void Build()
+        {
+            var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+
+            CreateGround();
+            CreateSun();
+            CreatePlayer();
+            CreateCamera();
+
+            if (!AssetDatabase.IsValidFolder(SceneFolder))
+            {
+                AssetDatabase.CreateFolder("Assets", "Scenes");
+            }
+
+            if (!EditorSceneManager.SaveScene(scene, ScenePath))
+            {
+                throw new System.Exception("[BUILDER] SaveScene falhou para " + ScenePath);
+            }
+
+            // A cena precisa estar na lista de build porque a change 09 sobe o player
+            // headless, e player headless nao tem quem escolha cena.
+            EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
+            AssetDatabase.SaveAssets();
+
+            Log("cena escrita em " + ScenePath);
+            Log("raizes=" + scene.rootCount);
+        }
+
+        /// <summary>
+        /// Chao com o TOPO exatamente em y = 0. Assim toda altura medida pela sonda e
+        /// altura acima do chao, sem subtrair espessura em lugar nenhum.
+        /// </summary>
+        static void CreateGround()
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = GroundName;
+            go.transform.localScale = new Vector3(GroundSide, GroundThickness, GroundSide);
+            go.transform.position = new Vector3(0f, -GroundThickness * 0.5f, 0f);
+        }
+
+        static void CreateSun()
+        {
+            var go = new GameObject(SunName);
+            go.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+
+            var sun = go.AddComponent<Light>();
+            sun.type = LightType.Directional;
+        }
+
+        /// <summary>
+        /// Capsula primitiva do Unity: raio 0.5, altura 2, centro no meio. Com o topo do
+        /// chao em y = 0, o repouso teorico do centro e y = 1.0 — esse e o numero que a
+        /// sonda confere.
+        /// </summary>
+        static void CreatePlayer()
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            go.name = PlayerName;
+            go.transform.position = new Vector3(0f, PlayerSpawnHeight, 0f);
+
+            var body = go.AddComponent<Rigidbody>();
+            body.mass = PlayerMassKg;
+            body.interpolation = RigidbodyInterpolation.Interpolate;
+
+            // Tombar nao e mecanica: o giro do personagem e do controle, nao do solver.
+            body.freezeRotation = true;
+
+            // collisionDetectionMode fica no default (Discrete) DE PROPOSITO. Caindo de
+            // 5 m a capsula chega a ~9.9 u/s, ~0.2 u por passo de 0.02 s, contra 1.0 u de
+            // meia-altura: nao ha tunelamento a evitar. Ligar CCD aqui seria otimizar
+            // antes de medir, que o briefing proibe.
+        }
+
+        static void CreateCamera()
+        {
+            var go = new GameObject(CameraName) { tag = CameraName };
+            go.transform.position = new Vector3(0f, 6f, -12f);
+            go.transform.rotation = Quaternion.Euler(20f, 0f, 0f);
+
+            go.AddComponent<Camera>();
+
+            // Sem AudioListener: o briefing proibe audio. O Unity avisa que nao ha
+            // listener na cena, e o aviso e esperado.
+        }
+
+        static void Log(string mensagem)
+        {
+            Debug.Log(string.Format(CultureInfo.InvariantCulture, "[BUILDER] {0}", mensagem));
+        }
+    }
+}
