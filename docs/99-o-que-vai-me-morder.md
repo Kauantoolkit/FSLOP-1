@@ -75,7 +75,30 @@ com Godot 4.7.x muda por release e não pode ser afirmada de memória.
 
 **Sai daqui quando:** a Fase 1-C começar e a documentação da versão exata for lida.
 
-## 7. Nenhuma stack emite log ainda
+## 7. O transporte Steam da candidata B está parado há 2 anos
+
+**Estado:** aberto, e é a maior ameaça à candidata favorita.
+
+Apurado em 06/09/2026 pela API do GitHub:
+
+```
+FishNet          tag 4.7.3   ultimo push 2026-09-02
+FishySteamworks  tag 4.1.1   commit da tag 2024-08-26
+```
+
+A candidata B é a única com predição/reconciliação pronta — que é o que o requisito
+mais difícil do briefing precisa. Mas a peça que a liga ao "P2P via relay da Steam" é a
+mais abandonada das três stacks, e o `package.json` dela traz `"dependencies": {}`, ou
+seja, não declara nem FishNet nem Steamworks.NET.
+
+Detalhe apurado no mesmo momento: as tags mentem sobre a própria versão — a tag `4.7.3`
+do FishNet declara `4.7.2`, e a `4.1.1` do FishySteamworks declara `4.1.0`. Não quebra
+nada (o UPM instala pela tag), mas a versão que o Unity mostra **não** é a instalada.
+
+**Sai daqui quando:** a Fase 1-B compilar e rodar contra Unity 6 + FishNet 4.7.3, ou
+não compilar — e aí o motivo já está datado. Detalhe em `tasks/FSLOP-1/decisions/06`.
+
+## 8. Nenhuma stack emite log ainda
 
 **Estado:** é onde o projeto está, não um problema — mas precisa estar escrito para
 ninguém confundir "o avaliador passa em 20/20" com "a base foi medida".
