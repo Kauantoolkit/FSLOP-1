@@ -28,10 +28,15 @@ namespace Fslop.SpikeB.EditorTools
         public const string PlayerName = "Player";
         public const string CameraName = "MainCamera";
         public const string SunName = "Sun";
+        public const string BoxStackName = "BoxStack";
 
         // Medidas em unidades do motor. O contrato de medicao fixa 1 u = 1 m, entao
         // massa em kg e altura em metros sao a mesma escala e nao ha conversao escondida.
-        const float GroundSide = 40f;
+        // 80 u, e o tamanho e resultado de medicao: com 40 u, o desabamento da torre de
+        // 15 u de altura jogava caixas para FORA da plataforma, e elas caiam no vazio. O
+        // teste "atravessou o chao" nao consegue distinguir isso de um bug de tunelamento
+        // do PhysX, entao o chao passou a ser grande o bastante para o entulho caber nele.
+        const float GroundSide = 80f;
         const float GroundThickness = 1f;
         const float PlayerSpawnHeight = 5f;
         const float PlayerMassKg = 70f;
@@ -47,6 +52,7 @@ namespace Fslop.SpikeB.EditorTools
             CreateSun();
             CreatePlayer(playerMaterial);
             CreateCamera();
+            CreateBoxStack();
 
             if (!AssetDatabase.IsValidFolder(SceneFolder))
             {
@@ -149,6 +155,19 @@ namespace Fslop.SpikeB.EditorTools
             // quando a rede entrar: o cliente remoto tem motor, nao tem teclado.
             go.AddComponent<CapsuleMotor>();
             go.AddComponent<CapsuleController>();
+        }
+
+        /// <summary>
+        /// So o objeto vazio com o spawner. As 150 caixas NAO ficam salvas na cena — quem
+        /// as cria e o BoxStackSpawner, sempre nas mesmas posicoes (ver o cabecalho dele).
+        /// Longe do spawn do jogador de proposito: a capsula cai de y=5 e nao pode
+        /// derrubar a pilha antes de a medicao comecar.
+        /// </summary>
+        static void CreateBoxStack()
+        {
+            var go = new GameObject(BoxStackName);
+            go.transform.position = new Vector3(10f, 0f, 0f);
+            go.AddComponent<BoxStackSpawner>();
         }
 
         static void CreateCamera()

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -41,6 +42,23 @@ namespace Fslop.SpikeB.EditorTools
         const int JumpMaxSteps = 200;            // 4 s
         const float ExpectedJumpHeightU = 1.2f;  // o jumpHeight do motor, que e PLACEHOLDER
         const float JumpToleranceFraction = 0.15f;
+
+        // --- fase 4, pilha de 150 ---
+        const int StackMaxSteps = 1500;          // 30 s a 50 Hz
+        const float EscapeY = -0.5f;             // abaixo disto a caixa atravessou o chao
+
+        /// <summary>
+        /// Quanto a caixa mais deslocada pode andar durante o assentamento e a pilha ainda
+        /// contar como "de pe". Meia caixa: acima disso ela nao acomodou, ela caiu.
+        /// </summary>
+        const float SelfCollapseU = 0.5f;
+
+        // --- fase 5, desabamento ---
+        // 280 N*s e exatamente o momento que a capsula de 70 kg carrega a 4 u/s. Nao e um
+        // numero escolhido para funcionar: e o empurrao que UM JOGADOR consegue dar, e o
+        // ponto e descobrir se ele derruba a pilha. Quem escolhe a caixa e a direcao e o
+        // BoxStackSpawner, porque isso depende da forma da pilha.
+        const float CollapseImpulse = 280f;
 
         static GameObject player;
         static Rigidbody body;
@@ -143,7 +161,12 @@ namespace Fslop.SpikeB.EditorTools
                 return;
             }
 
-            Jump(restY);
+            if (!Jump(restY))
+            {
+                return;
+            }
+
+            Stack(scene);
         }
 
         /// <summary>Fase 1: a capsula cai do spawn e para. Sem intent nenhuma.</summary>
@@ -344,6 +367,317 @@ namespace Fslop.SpikeB.EditorTools
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Fase 4: as 150 caixas 1x1 do teste minimo. Mede tres coisas que a change 09 vai
+        /// precisar antes de existir fps: quanto custa um passo de fisica com 150 corpos,
+        /// quantos passos a pilha leva para dormir, e se ela se mantem inteira.
+        ///
+        /// O custo por passo NAO e fps e nao pode ser publicado como tal: aqui nao ha
+        /// render, nem scripts de gameplay, nem rede. E o piso do orcamento de 16.67 ms,
+        /// nao o gasto.
+        /// </summary>
+        static bool Stack(Scene scene)
+        {
+            var host = Find(scene, SpikeSceneBuilder.BoxStackName);
+            if (failure != null)
+            {
+                return false;
+            }
+
+            var spawner = host.GetComponent<BoxStackSpawner>();
+            if (spawner == null)
+            {
+                Fail("o objeto " + SpikeSceneBuilder.BoxStackName + " nao tem BoxStackSpawner");
+                return false;
+            }
+
+            var caixas = spawner.Spawn();
+            var origem = new Vector3[caixas.Count];
+            for (int i = 0; i < caixas.Count; i++)
+            {
+                origem[i] = caixas[i].transform.position;
+            }
+
+            Log(F("PILHA criada corpos={0} planejados={1} massa_kg={2:F1} origem_y_topo={3:F4}",
+                caixas.Count, spawner.PlannedCount, caixas[0].mass,
+                origem[caixas.Count - 1].y));
+
+            if (caixas.Count != spawner.PlannedCount)
+            {
+                Fail(F("a pilha nasceu com {0} corpos e o plano era {1}",
+                    caixas.Count, spawner.PlannedCount));
+                return false;
+            }
+
+            var custos = new List<double>(StackMaxSteps);
+            var cronometro = new System.Diagnostics.Stopwatch();
+
+            int passoDormiu = 0;
+            int acordados = caixas.Count;
+            int steps;
+
+            for (steps = 1; steps <= StackMaxSteps; steps++)
+            {
+                cronometro.Restart();
+                Physics.Simulate(dt);
+                cronometro.Stop();
+                custos.Add(cronometro.Elapsed.TotalMilliseconds);
+
+                acordados = 0;
+                for (int i = 0; i < caixas.Count; i++)
+                {
+                    if (!caixas[i].IsSleeping())
+                    {
+                        acordados++;
+                    }
+                }
+
+                if (steps <= 3 || steps % 100 == 0)
+                {
+                    Log(F("pilha step={0,4} t={1:F3} acordados={2,3} custo_ms={3:F3}",
+                        steps, steps * dt, acordados, custos[custos.Count - 1]));
+                }
+
+                if (acordados == 0)
+                {
+                    passoDormiu = steps;
+                    break;
+                }
+            }
+
+            float maxDesloc = 0f;
+            int fugitivas = 0;
+            for (int i = 0; i < caixas.Count; i++)
+            {
+                Vector3 agora = caixas[i].transform.position;
+                float d = Vector3.Distance(agora, origem[i]);
+                if (d > maxDesloc)
+                {
+                    maxDesloc = d;
+                }
+
+                if (agora.y < EscapeY)
+                {
+                    fugitivas++;
+                }
+            }
+
+            Log(F("PILHA passos={0} t={1:F3} dormiu_no_passo={2} acordados_final={3} " +
+                  "custo_ms_1o={4:F3} custo_ms_medio={5:F3} custo_ms_p99={6:F3} custo_ms_max={7:F3} " +
+                  "max_desloc_u={8:F4} fugitivas={9}",
+                steps, steps * dt, passoDormiu, acordados,
+                custos[0], Media(custos), Percentil(custos, 0.99), Maximo(custos),
+                maxDesloc, fugitivas));
+
+            if (fugitivas > 0)
+            {
+                Fail(F("{0} caixas atravessaram o chao (y < {1:F2})", fugitivas, EscapeY));
+                return false;
+            }
+
+            if (passoDormiu == 0)
+            {
+                Fail(F("a pilha nao dormiu em {0} passos ({1:F1} s); ainda {2} acordados",
+                    StackMaxSteps, StackMaxSteps * dt, acordados));
+                return false;
+            }
+
+            // Esta checagem existe porque eu li o desabamento espontaneo A OLHO num log
+            // que a sonda tinha marcado PASS (errors/03). O instrumento tem que pegar isso,
+            // nao eu: uma pilha que cai sozinha nao serve de estado inicial para medir nada,
+            // porque a corrida ja comeca com o pior caso gasto.
+            if (maxDesloc > SelfCollapseU)
+            {
+                Fail(F("a pilha desabou sozinha antes de qualquer empurrao: " +
+                       "max_desloc_u={0:F4} > {1:F4}", maxDesloc, SelfCollapseU));
+                return false;
+            }
+
+            return Collapse(spawner, caixas, origem);
+        }
+
+        /// <summary>
+        /// Fase 5: derrubar a pilha e medir o pior caso.
+        ///
+        /// A pilha assentada dorme e nao custa quase nada — e por isso o numero dela nao
+        /// serve para orcar 60 fps. O que orca e a pilha DESABANDO, que e tambem o momento
+        /// em que a banda por cliente estoura (o contrato de medicao diz isso na coluna
+        /// bodies_awake). Esta fase produz esse pior caso de forma deterministica.
+        /// </summary>
+        static bool Collapse(BoxStackSpawner spawner, List<Rigidbody> caixas, Vector3[] origem)
+        {
+            // As posicoes de ANTES do empurrao. Sem elas nao da para saber o que o
+            // empurrao fez: medir contra o nascimento da pilha soma o que ela ja tinha
+            // andado assentando, e foi assim que uma corrida marcou "131 caixas movidas"
+            // sem o empurrao ter movido nenhuma (errors/03).
+            var antes = new Vector3[caixas.Count];
+            for (int i = 0; i < caixas.Count; i++)
+            {
+                antes[i] = caixas[i].transform.position;
+            }
+
+            var alvo = caixas[spawner.ShoveTargetIndex()];
+            alvo.WakeUp();
+            alvo.AddForce(spawner.ShoveDirection * CollapseImpulse, ForceMode.Impulse);
+
+            Log(F("DESABAMENTO impulso={0:F1} Ns em {1} (indice {2}) massa={3:F1} kg " +
+                  "pos=({4:F2},{5:F2},{6:F2}) massa_total_pilha={7:F0} kg",
+                CollapseImpulse, alvo.name, spawner.ShoveTargetIndex(), alvo.mass,
+                alvo.transform.position.x, alvo.transform.position.y, alvo.transform.position.z,
+                alvo.mass * caixas.Count));
+
+            var custos = new List<double>(StackMaxSteps);
+            var cronometro = new System.Diagnostics.Stopwatch();
+
+            int picoAcordados = 0;
+            int passoPico = 0;
+            int passoDormiu = 0;
+            int acordados = 0;
+            int steps;
+
+            for (steps = 1; steps <= StackMaxSteps; steps++)
+            {
+                cronometro.Restart();
+                Physics.Simulate(dt);
+                cronometro.Stop();
+                custos.Add(cronometro.Elapsed.TotalMilliseconds);
+
+                acordados = 0;
+                for (int i = 0; i < caixas.Count; i++)
+                {
+                    if (!caixas[i].IsSleeping())
+                    {
+                        acordados++;
+                    }
+                }
+
+                if (acordados > picoAcordados)
+                {
+                    picoAcordados = acordados;
+                    passoPico = steps;
+                }
+
+                if (steps <= 3 || steps % 100 == 0)
+                {
+                    Log(F("desab step={0,4} t={1:F3} acordados={2,3} custo_ms={3:F3}",
+                        steps, steps * dt, acordados, custos[custos.Count - 1]));
+                }
+
+                if (acordados == 0)
+                {
+                    passoDormiu = steps;
+                    break;
+                }
+            }
+
+            float maxDeslocTotal = 0f;
+            float maxDeslocEmpurrao = 0f;
+            int fugitivas = 0;
+            int movidas = 0;
+            for (int i = 0; i < caixas.Count; i++)
+            {
+                Vector3 agora = caixas[i].transform.position;
+
+                float total = Vector3.Distance(agora, origem[i]);
+                if (total > maxDeslocTotal)
+                {
+                    maxDeslocTotal = total;
+                }
+
+                float peloEmpurrao = Vector3.Distance(agora, antes[i]);
+                if (peloEmpurrao > maxDeslocEmpurrao)
+                {
+                    maxDeslocEmpurrao = peloEmpurrao;
+                }
+
+                if (peloEmpurrao > 0.5f)
+                {
+                    movidas++;
+                }
+
+                if (agora.y < EscapeY)
+                {
+                    fugitivas++;
+                }
+            }
+
+            double media = Media(custos);
+            double p99 = Percentil(custos, 0.99);
+            double maximo = Maximo(custos);
+
+            Log(F("DESABAMENTO passos={0} t={1:F3} dormiu_no_passo={2} pico_acordados={3} " +
+                  "no_passo={4} custo_ms_medio={5:F3} custo_ms_p99={6:F3} custo_ms_max={7:F3} " +
+                  "desloc_pelo_empurrao_u={8:F4} desloc_total_u={9:F4} caixas_movidas={10} " +
+                  "fugitivas={11}",
+                steps, steps * dt, passoDormiu, picoAcordados, passoPico,
+                media, p99, maximo, maxDeslocEmpurrao, maxDeslocTotal, movidas, fugitivas));
+
+            // O orcamento de quadro a 60 fps e 16.67 ms. Este numero e SO a fisica, sem
+            // render, sem scripts e sem rede — e piso, nao gasto. Fica no log como fracao
+            // do orcamento justamente para ninguem confundir os dois.
+            Log(F("DESABAMENTO fisica_p99_como_fracao_de_16.67ms={0:F3} ({1:F1}%)",
+                p99 / 16.67, p99 / 16.67 * 100.0));
+
+            if (fugitivas > 0)
+            {
+                Fail(F("{0} caixas atravessaram o chao no desabamento (y < {1:F2})",
+                    fugitivas, EscapeY));
+                return false;
+            }
+
+            if (passoDormiu == 0)
+            {
+                Fail(F("a pilha nao voltou a dormir em {0} passos ({1:F1} s); ainda {2} acordados",
+                    StackMaxSteps, StackMaxSteps * dt, acordados));
+                return false;
+            }
+
+            // "Quantas caixas um jogador derruba" NAO reprova a corrida, de proposito. E
+            // numero a reportar, como a banda no contrato de medicao: inventar um minimo
+            // seria eu decidindo quanta bagunca o jogo deve permitir, que e design.
+            Log(F("DESABAMENTO leitura: um empurrao de escala de jogador ({0:F0} Ns, o " +
+                  "momento de 70 kg a 4 u/s) moveu {1} de {2} caixas mais de 0.5 u",
+                CollapseImpulse, movidas, caixas.Count));
+
+            return true;
+        }
+
+        static double Media(List<double> valores)
+        {
+            double soma = 0;
+            for (int i = 0; i < valores.Count; i++)
+            {
+                soma += valores[i];
+            }
+
+            return soma / valores.Count;
+        }
+
+        static double Maximo(List<double> valores)
+        {
+            double maior = valores[0];
+            for (int i = 1; i < valores.Count; i++)
+            {
+                if (valores[i] > maior)
+                {
+                    maior = valores[i];
+                }
+            }
+
+            return maior;
+        }
+
+        static double Percentil(List<double> valores, double fracao)
+        {
+            var copia = new List<double>(valores);
+            copia.Sort();
+
+            int indice = Mathf.Clamp(
+                Mathf.CeilToInt((float)(fracao * copia.Count)) - 1, 0, copia.Count - 1);
+
+            return copia[indice];
         }
 
         static GameObject Find(Scene scene, string nome)
