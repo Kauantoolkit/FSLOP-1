@@ -95,8 +95,31 @@ Detalhe apurado no mesmo momento: as tags mentem sobre a própria versão — a 
 do FishNet declara `4.7.2`, e a `4.1.1` do FishySteamworks declara `4.1.0`. Não quebra
 nada (o UPM instala pela tag), mas a versão que o Unity mostra **não** é a instalada.
 
-**Sai daqui quando:** a Fase 1-B compilar e rodar contra Unity 6 + FishNet 4.7.3, ou
-não compilar — e aí o motivo já está datado. Detalhe em `tasks/FSLOP-1/decisions/06`.
+**Atualizado no mesmo dia, ao instalar (change 02):** ele **compila limpo** —
+`Assembly-CSharp.dll`, 0 `error CS`, com `FishySteamworks` referenciando
+`FishNet.Transporting`. A deriva de 2 anos não quebrou a compilação. Se quebra em
+runtime, quem responde é a change 06 (lobby). O item continua aberto por isso.
+
+**Sai daqui quando:** o lobby Steam da change 06 subir e fechar conexão de verdade.
+Detalhe em `tasks/FSLOP-1/decisions/06`.
+
+## 7b. O transporte da candidata B não é dependência versionada
+
+**Estado:** aberto, e não tem solução limpa.
+
+FishySteamworks não pode ser instalado por UPM de jeito nenhum: pelo git da raiz chega
+**vazio** (o `.gitignore` do repo tem `*/`, que ignora todo diretório, e as exceções
+apontam para um caminho que não existe mais na tag); por `?path=` chega completo mas
+**não compila**, porque o pacote não tem `.asmdef` e o Unity não compila script de
+pacote UPM sem um.
+
+Ficou copiado para `Assets/FishNet/Plugins/FishySteamworks/`. Funciona, mas **não há
+pino de versão no `manifest.json`** para ele: atualizar ou auditar vira trabalho
+manual, e uma máquina nova só confere comparando arquivo por arquivo. A procedência
+está em `spike/B-unity-fishnet/VERSOES.md`.
+
+**Sai daqui quando:** a candidata B vencer o spike e valer a pena fazer um fork com
+`.asmdef` — ou quando ela perder e o problema deixar de existir.
 
 ## 8. Nenhuma stack emite log ainda
 
