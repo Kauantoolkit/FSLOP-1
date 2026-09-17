@@ -36,12 +36,18 @@ auto-descritivo: quem o ler daqui a três meses sabe contra o que ele vale.
 ```
 [SOAK-META] run=<id> stack=<A|B|C> role=<host|client> id=<0..3> pid=<int>
             build=<sha-curto> engine=<versao> transport=<local|steam>
-            rtt_ms=<int> loss_pct=<float> bodies=<int> started=<ISO-8601>
+            display=<local|parsec> rtt_ms=<int> loss_pct=<float>
+            bodies=<int> started=<ISO-8601>
 ```
 
 - `run` — mesmo id nas 4 instâncias da mesma corrida. É a chave de junção.
 - `transport` — `local` ou `steam`. **Nenhuma métrica de rede pode ser publicada como
   "sobre Steam" com este campo em `local`** (ver `decisions/01` da task).
+- `display` — **acrescentado em 17/09/2026**, ao emitir a primeira corrida com fps de
+  verdade. A máquina de referência tem um **Parsec Virtual Display Adapter**, e fps medido
+  por sessão remota não é o mesmo número que fps no monitor local. Sem este campo, nenhuma
+  medição de fps é reprodutível — foi a pendência registrada em `docs/99` item 4 desde o
+  início do spike.
 - `rtt_ms` / `loss_pct` — o que foi **injetado**, não o observado.
 - `build` — SHA curto do commit que gerou o binário. Corrida sem âncora não é evidência.
 

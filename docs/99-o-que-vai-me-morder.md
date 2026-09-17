@@ -49,14 +49,18 @@ falso. Publicar "RTX 3060 4 GB" como hardware de referência seria publicar um e
 
 ## 4. Medição de fps por Parsec não é reprodutível
 
-**Estado:** aberto, e o contrato ainda não protege contra isso.
+**Estado:** **fechado para a candidata B em 17/09/2026**; aberto para A e C.
 
 A máquina tem um Parsec Virtual Display Adapter. Uma corrida feita durante sessão
 remota passa por outro caminho de apresentação, e o fps medido não vale como o fps do
-monitor local. O `[SOAK-META]` **não tem campo para isso hoje**.
+monitor local.
 
-**Sai daqui quando:** o contrato ganhar um campo `display=local|parsec` e a emissão nas
-stacks preenchê-lo. Antes da primeira medição de fps que conte como resultado.
+O campo `display=local|parsec` **entrou no `[SOAK-META]`** junto com a primeira corrida que
+mediu fps de verdade (`changes/09`), e a candidata B o emite. As corridas registradas até
+agora são todas `display=local`.
+
+**Sai daqui quando:** as candidatas A e C também emitirem o campo. Antes disso, nenhum fps
+delas é comparável com o da B.
 
 ## 5. O agarre da viga está medido sem rede — e a rede é a metade que falta
 
@@ -272,10 +276,23 @@ consequência direta no soak: **inputs scriptados que só esbarram na pilha vão
 de pilha dormindo**, e o `docs/00-contrato-de-medicao.md` avisa que média de banda com
 `bodies_awake` baixo não significa nada.
 
-**Sai daqui quando:** a change 09 definir o gatilho de carga do soak. As saídas conhecidas
-são: os 4 jogadores empurrarem juntos, largar a viga de 6 m em cima da pilha, ou a pilha
-nascer no ar e cair durante a corrida. Nenhuma foi escolhida — e a última é a única que
-não depende de nada que ainda não existe.
+**FECHADO em 17/09/2026** (`changes/09`, `decisions/11`). O gatilho escolhido não estava na
+lista de saídas que eu tinha levantado: é **a viga de 6 m carregada pelos 4 portadores
+varrendo a área**, com o tamanho do quadrado de patrulha como intensidade.
+
+A escolha saiu de duas corridas de 45 s da mesma build, variando **só** o lado da patrulha,
+com a série de `bodies_awake` enumerada inteira:
+
+- **patrulha de 16 u** — a pilha dorme em ~4 s, **acorda em t=26 e de novo em t=41**: a
+  viga alcança a pilha na segunda volta e a derruba, repetidamente;
+- **patrulha de 2 u** — dorme em ~4 s e **não acorda em 45 s**.
+
+Uma variável, resultados opostos. O gatilho é periódico sem ser roteirizado (a carga volta
+porque a patrulha volta), usa o cenário do próprio briefing em vez de um empurrador
+sintético, e tem dial sem recompilar (`-soakPatrolSteps`).
+
+**O que continua valendo deste item:** a pilha de 6 camadas é alvenaria e um jogador
+sozinho não a derruba. Isso não mudou — mudou o que o soak faz a respeito.
 
 ## 13. O código de sala depende de um detalhe interno do SteamID
 
