@@ -179,13 +179,115 @@ def checar_procedencia(corrida):
 
 
 def checar_duracao(corrida, minimo):
-    tempos = [num(a, "t") for a in corrida.amostras]
-    tempos = [t for t in tempos if t is not None]
+    """Quanto a corrida COBRE, que nao e o intervalo entre a 1a e a ultima amostra.
+
+    Corrigido em 17/09. A versao anterior usava max(t)-min(t) das amostras. Uma
+    corrida de 600 s exatos dava 599.1 s e reprovava, porque cada amostra cobre o
+    intervalo ate a proxima e o span perde a ultima. O erro e sempre para menos.
+
+    ATENCAO ao ler este diff: e uma checagem que ANTES reprovava e agora aprova, e
+    esse e justamente o movimento que merece desconfianca. A primeira tentativa de
+    conserto era pior e foi descartada: usar max(t) de QUALQUER linha fazia a
+    corrida congelada de 17/09 (errors/05) PASSAR com 1632 s de "cobertura", porque
+    o t do shutdown e relogio de parede e seguiu correndo com o processo parado.
+    Por isso a conta usa so amostras -- linha de amostra so existe se algo foi
+    medido -- e o passo sai da mediana da propria corrida, nao de uma constante.
+    """
+    tempos = sorted(t for t in (num(a, "t") for a in corrida.amostras) if t is not None)
     if not tempos:
         return Resultado("duracao", "FAIL", "nenhuma amostra tem campo t=")
-    span = max(tempos) - min(tempos)
-    status = "PASS" if span >= minimo else "FAIL"
-    return Resultado("duracao", status, "%.1f s (minimo %.0f s)" % (span, minimo))
+
+    span = tempos[-1] - tempos[0]
+
+    # Cada amostra COBRE o intervalo ate a proxima, entao o span perde uma. O
+    # intervalo sai da mediana da propria corrida em vez de uma constante, pelo
+    # mesmo motivo de relogio_coerente: serve para qualquer cadencia de emissao.
+    intervalos = sorted(tempos[i] - tempos[i - 1] for i in range(1, len(tempos)))
+    passo = intervalos[len(intervalos) // 2] if intervalos else 0.0
+    cobertura = span + passo
+
+    status = "PASS" if cobertura >= minimo else "FAIL"
+    return Resultado(
+        "duracao", status,
+        "cobertura %.1f s (minimo %.0f s) = span %.1f + 1 intervalo de %.2f s"
+        % (cobertura, minimo, span, passo),
+    )
+
+
+def checar_coerencia_do_relogio(corrida):
+    """O relogio de parede e o contador de passos tem que andar juntos.
+
+    Origem: a corrida de 600s de 17/09. O player do Unity para o loop quando a
+    janela perde o foco, e ninguem clica na janela de um soak automatizado. A
+    corrida congelou aos 96 s: `t` seguiu ate 1632 s porque e relogio de parede,
+    `tick` parou em 4458. As amostras que sobraram eram todas boas -- fps alto,
+    zero excecao, viga comportada -- porque medir menos e a forma mais facil de
+    parecer bem.
+
+    A duracao pegou aquele caso por sorte (o log ficou curto). Nao pega o caso
+    geral: um congelamento no MEIO de uma corrida longa deixa duracao e contagem
+    de amostras intactas. O sintoma direto e este -- t anda e tick nao.
+
+    Nao usa dt do motor de proposito: a taxa esperada sai da mediana da propria
+    corrida, entao a checagem serve igual para as tres candidatas, com qualquer
+    passo de fisica.
+    """
+    problemas = []
+    detalhes = []
+
+    for papel_id in sorted({(a.get("role"), a.get("id")) for a in corrida.amostras}):
+        amostras = [a for a in corrida.amostras
+                    if (a.get("role"), a.get("id")) == papel_id]
+        serie = []
+        for a in amostras:
+            t, tick = num(a, "t"), num(a, "tick")
+            if t is not None and tick is not None:
+                serie.append((t, tick))
+
+        serie.sort()
+        if len(serie) < 3:
+            continue
+
+        taxas = []
+        for i in range(1, len(serie)):
+            dt = serie[i][0] - serie[i - 1][0]
+            dtick = serie[i][1] - serie[i - 1][1]
+            if dt > 0:
+                taxas.append((serie[i][0], dtick / dt))
+
+        if not taxas:
+            continue
+
+        mediana = sorted(v for _, v in taxas)[len(taxas) // 2]
+
+        # Mediana zero significa que o tick ficou parado na MAIOR PARTE da corrida.
+        # A versao anterior fazia `continue` aqui e desistia da checagem em
+        # silencio -- justo no caso pior, o congelamento que domina a corrida. Um
+        # log sintetico com 6 de 10 intervalos travados passou limpo por causa
+        # disso, e foi assim que o buraco apareceu.
+        if mediana <= 0:
+            problemas.append(
+                "%s/%s: tick parado na maior parte da corrida (taxa mediana 0 em "
+                "%d intervalos)" % (papel_id[0], papel_id[1], len(taxas))
+            )
+            continue
+
+        travadas = [(t, v) for t, v in taxas if v < mediana * 0.5]
+        detalhes.append("%s/%s: %.1f tick/s mediano" % (papel_id[0], papel_id[1], mediana))
+
+        if travadas:
+            pior = min(travadas, key=lambda p: p[1])
+            problemas.append(
+                "%s/%s: %d intervalo(s) abaixo de metade da taxa; pior em t=%.3f com "
+                "%.1f tick/s contra %.1f mediano"
+                % (papel_id[0], papel_id[1], len(travadas), pior[0], pior[1], mediana)
+            )
+
+    if problemas:
+        return Resultado("relogio_coerente", "FAIL", "; ".join(problemas))
+    if not detalhes:
+        return Resultado("relogio_coerente", "FAIL", "nenhuma amostra com t= e tick=")
+    return Resultado("relogio_coerente", "PASS", "; ".join(detalhes))
 
 
 def checar_fps_host(corrida):
@@ -393,6 +495,7 @@ def avaliar(diretorio, instancias, duracao_minima):
         integridade,
         checar_procedencia(corrida),
         checar_duracao(corrida, duracao_minima),
+        checar_coerencia_do_relogio(corrida),
         checar_fps_host(corrida),
         checar_banda(corrida),
         checar_teleporte(corrida),

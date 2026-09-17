@@ -73,6 +73,13 @@ namespace Fslop.SpikeB
             QualitySettings.vSyncCount = 0;
             Application.targetFrameRate = -1;
 
+            // SEM ISTO O SOAK MENTE. O padrao do player e parar o loop quando a janela perde
+            // o foco. A corrida de 600 s de 17/09 congelou aos 96 s por causa disso: o
+            // relogio de parede chegou a 1632 s enquanto o tick parou em 4458 (89 s de
+            // simulacao), e a linha de shutdown saiu com t=1632 sem nada ter sido medido no
+            // meio. Um soak automatizado nao tem quem clique na janela.
+            Application.runInBackground = true;
+
             LerArgumentos();
 
             Application.logMessageReceived += AoReceberLog;

@@ -146,6 +146,38 @@ def caso_runs_misturadas():
     return espera_falha(a, "integridade")
 
 
+def caso_relogio_travado():
+    """O processo parou de simular no meio, mas seguiu escrevendo amostras.
+
+    Caso real (errors/05 da task): o player do Unity para o loop quando a janela
+    perde o foco. As amostras que restam sao todas BOAS -- e por isso a corrida
+    passava em tudo. Aqui os ticks param de avancar a partir da 5a amostra
+    enquanto t continua andando.
+    """
+    a = montar_base()
+    a["inst0-host.log"] = [meta("host", 0)] + [
+        amostra("host", 0, i, tick=str(TICK0 + min(i, 4) * 60))
+        for i in range(N_AMOSTRAS)
+    ] + [evento("host", 0, "host_quit", TICK0 + 4 * 60, T0 + 10)]
+    return espera_falha(a, "relogio_coerente")
+
+
+def caso_duracao_no_limite():
+    """Corrida que cobre exatamente o minimo nao pode reprovar por 1 amostra.
+
+    Cada amostra cobre o intervalo ate a proxima, entao 11 amostras de 1 em 1 s
+    cobrem 11 s e nao 10. Antes de 17/09 o avaliador media so o span e reprovava
+    a corrida de 600 s exatos do soak.
+    """
+    codigo, res = rodar(montar_base())
+    r = res.get("duracao")
+    if r is None:
+        return False, "duracao nem foi avaliada"
+    # montar_base tem N_AMOSTRAS amostras de 1 em 1 s: cobre N_AMOSTRAS segundos.
+    ok = r.status == "PASS"
+    return ok, "duracao: %s (%s)" % (r.status, r.detalhe)
+
+
 def caso_duracao_curta():
     a = {"inst0-host.log": [meta("host", 0), amostra("host", 0, 0), amostra("host", 0, 1),
                             evento("host", 0, "host_quit", TICK0, T0)],
@@ -279,6 +311,8 @@ CASOS = [
     ("dois hosts", caso_dois_hosts),
     ("logs de corridas diferentes", caso_runs_misturadas),
     ("corrida curta demais", caso_duracao_curta),
+    ("relogio travado no meio", caso_relogio_travado),
+    ("duracao exatamente no limite", caso_duracao_no_limite),
     ("fps do host abaixo de 60", caso_fps_baixo),
     ("fps ok mas p99 do quadro estourado", caso_frame_p99_alto),
     ("viga teleporta", caso_teleporte),
