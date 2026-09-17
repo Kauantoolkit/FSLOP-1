@@ -146,6 +146,38 @@ def caso_runs_misturadas():
     return espera_falha(a, "integridade")
 
 
+def caso_input_nao_instrumentado():
+    """-1 nao pode passar por "respondeu em -1 ms".
+
+    Falso verde real de 17/09: o cliente emitia input_ms_p99=-1 porque o campo nao
+    estava instrumentado, e o avaliador devolvia PASS com "pior p99 -1.0 ms
+    (limite 100)". O juiz dava verde justamente para o que nao foi medido.
+    """
+    a = montar_base()
+    a["inst1-client.log"] = [meta("client", 1)] + [
+        amostra("client", 1, i, input_ms_p99="-1") for i in range(N_AMOSTRAS)
+    ] + [
+        evento("client", 1, "late_join_done", TICK_LATE, T0 + 2,
+               elapsed_ms="820.0", world_hash=HASH),
+        evento("client", 1, "shutdown", TICK0 + 10 * 60, T0 + 10, clean="1", reason="x"),
+    ]
+    return espera_falha(a, "resposta_do_input")
+
+
+def caso_drift_nao_instrumentado():
+    """Mesma armadilha do input, no campo de drift."""
+    a = montar_base()
+    a["inst1-client.log"] = [meta("client", 1)] + [
+        amostra("client", 1, i, drift_max_u="-1", drift_p99_u="-1")
+        for i in range(N_AMOSTRAS)
+    ] + [
+        evento("client", 1, "late_join_done", TICK_LATE, T0 + 2,
+               elapsed_ms="820.0", world_hash=HASH),
+        evento("client", 1, "shutdown", TICK0 + 10 * 60, T0 + 10, clean="1", reason="x"),
+    ]
+    return espera_falha(a, "drift")
+
+
 def caso_relogio_travado():
     """O processo parou de simular no meio, mas seguiu escrevendo amostras.
 
@@ -311,6 +343,8 @@ CASOS = [
     ("dois hosts", caso_dois_hosts),
     ("logs de corridas diferentes", caso_runs_misturadas),
     ("corrida curta demais", caso_duracao_curta),
+    ("input nao instrumentado (-1)", caso_input_nao_instrumentado),
+    ("drift nao instrumentado (-1)", caso_drift_nao_instrumentado),
     ("relogio travado no meio", caso_relogio_travado),
     ("duracao exatamente no limite", caso_duracao_no_limite),
     ("fps do host abaixo de 60", caso_fps_baixo),

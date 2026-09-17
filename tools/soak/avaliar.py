@@ -336,10 +336,15 @@ def checar_banda(corrida):
     for ident in sorted(por_id):
         rx = [num(a, "rx_KBps") for a in por_id[ident]]
         tx = [num(a, "tx_KBps") for a in por_id[ident]]
-        rx = [v for v in rx if v is not None]
-        tx = [v for v in tx if v is not None]
+        # -1 e "NAO INSTRUMENTADO", nao "zero bytes". Media-lo junto produziria um
+        # numero negativo que parece dado. A candidata B cai aqui: o FishNet 4.7.3
+        # nao expoe contagem de bytes de socket fora de build de desenvolvimento, e
+        # as classes que a guardam sao internal ao assembly dele.
+        rx = [v for v in rx if v is not None and v >= 0]
+        tx = [v for v in tx if v is not None and v >= 0]
         if not rx or not tx:
-            partes.append("id=%s SEM CAMPO DE BANDA" % ident)
+            partes.append("id=%s BANDA NAO INSTRUMENTADA (rx/tx vieram -1 ou ausentes)"
+                          % ident)
             continue
         partes.append(
             "id=%s rx %.1f/%.1f KBps (med/pico) tx %.1f/%.1f"
@@ -364,11 +369,23 @@ def checar_teleporte(corrida):
 
 
 def checar_input(corrida):
+    """-1 e NAO INSTRUMENTADO, e nao "respondeu em -1 ms".
+
+    Bug de falso verde achado em 17/09: o cliente emitia input_ms_p99=-1 por nao
+    ter o campo instrumentado, e esta checagem devolvia PASS com "pior p99 -1.0 ms
+    (limite 100)". Ou seja, o campo NAO medido passava com folga -- o juiz dando
+    verde justamente para quem nao foi medido, que e o contrario do que ele existe
+    para fazer. A convencao -1 e do proprio contrato (o host usa -1 em drift), e
+    toda checagem que le um campo assim precisa filtrar antes de comparar.
+    """
     clientes = [a for a in corrida.amostras
-                if a.get("role") == "client" and num(a, "input_ms_p99") is not None]
+                if a.get("role") == "client"
+                and num(a, "input_ms_p99") is not None
+                and num(a, "input_ms_p99") >= 0]
     if not clientes:
         return Resultado("resposta_do_input", "FAIL",
-                         "nenhuma amostra de cliente com input_ms_p99=")
+                         "nenhuma amostra de cliente com input_ms_p99 medido "
+                         "(ausente, ou -1 = nao instrumentado)")
     limite = LIMIARES["input_ms_p99_max"]
     ruins = [a for a in clientes if num(a, "input_ms_p99") > limite]
     pior = max(clientes, key=lambda a: num(a, "input_ms_p99"))
@@ -387,13 +404,16 @@ def checar_drift(corrida):
         a for a in corrida.amostras
         if a.get("role") == "client"
         and num(a, "t") is not None and num(a, "t") >= apos
-        and num(a, "drift_max_u") is not None
+        # Mesma armadilha de checar_input: -1 e "nao instrumentado", e sem este
+        # filtro um drift nao medido passaria como o melhor drift possivel.
+        and num(a, "drift_max_u") is not None and num(a, "drift_max_u") >= 0
     ]
     if not elegiveis:
         return Resultado(
             "drift", "FAIL",
-            "nenhuma amostra de cliente com t>=%.0fs e drift_max_u= - a corrida "
-            "nao chegou aos 5 min ou o campo nao foi emitido" % apos
+            "nenhuma amostra de cliente com t>=%.0fs e drift_max_u medido (ausente, "
+            "ou -1 = nao instrumentado) - a corrida nao chegou aos 5 min ou o campo "
+            "nao foi emitido" % apos
         )
     ruins = [a for a in elegiveis if num(a, "drift_max_u") >= limite]
     pior = max(elegiveis, key=lambda a: num(a, "drift_max_u"))

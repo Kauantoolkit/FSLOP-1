@@ -31,6 +31,7 @@ namespace Fslop.SpikeB.EditorTools
         public const string BoxStackName = "BoxStack";
         public const string BeamName = "Beam";
         public const string SoakRunnerName = "SoakRunner";
+        public const string NetworkName = "NetworkManager";
 
         // Medidas em unidades do motor. O contrato de medicao fixa 1 u = 1 m, entao
         // massa em kg e altura em metros sao a mesma escala e nao ha conversao escondida.
@@ -56,6 +57,7 @@ namespace Fslop.SpikeB.EditorTools
             CreateCamera();
             CreateBoxStack();
             CreateBeam();
+            CreateNetwork();
             CreateSoakRunner();
 
             if (!AssetDatabase.IsValidFolder(SceneFolder))
@@ -190,6 +192,22 @@ namespace Fslop.SpikeB.EditorTools
             body.interpolation = RigidbodyInterpolation.Interpolate;
 
             go.AddComponent<CarryBeam>();
+        }
+
+        /// <summary>
+        /// O NetworkManager do FishNet. So o componente raiz e adicionado aqui: lido em
+        /// NetworkManager.cs, ele cria sozinho os managers que faltam (GetOrCreateComponent,
+        /// linhas 320-335), e o TransportManager adiciona o Tugboat sozinho quando nao acha
+        /// nenhum Transport no objeto (TransportManager.cs:268). Montar tudo a mao aqui
+        /// duplicaria o que a biblioteca ja faz, e duplicacao envelhece a cada versao dela.
+        ///
+        /// Tugboat e transporte UDP local. E o que decisions/01 previu para o soak
+        /// automatizado; o relay da Steam continua sendo prova manual de 2 maquinas.
+        /// </summary>
+        static void CreateNetwork()
+        {
+            var go = new GameObject(NetworkName);
+            go.AddComponent<FishNet.Managing.NetworkManager>();
         }
 
         /// <summary>

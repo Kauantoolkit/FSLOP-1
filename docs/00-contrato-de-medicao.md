@@ -82,6 +82,27 @@ pilha desabando manda tudo. Sem esta coluna, "média de banda" é um número que
 significa nada — não se sabe se a pilha estava parada. Não é otimização: é a variável
 de controle da medição.
 
+### `-1` significa NÃO INSTRUMENTADO, nunca zero
+
+Regra geral, escrita em 17/09 depois de ela ser violada. O contrato já usava `-1` para
+"não se aplica" (drift e input no host). A regra completa é:
+
+- **`-1` em qualquer campo numérico quer dizer "esta instância não mede isto".** Nunca
+  quer dizer zero, nem quer dizer bom;
+- **toda checagem do avaliador tem que filtrar `-1` antes de comparar com limiar.** Sem
+  isso, um campo **não medido** passa com folga — foi o que aconteceu: um cliente emitindo
+  `input_ms_p99=-1` produzia `PASS  resposta_do_input  pior p99 -1.0 ms (limite 100)`. O
+  juiz dando verde exatamente para quem não foi medido;
+- **campo que a stack não consegue emitir é lacuna daquela stack**, e aparece no relatório
+  como lacuna — não vira campo opcional nem valor inventado.
+
+**Lacuna conhecida da candidata B:** `rx_KBps`/`tx_KBps` saem `-1`. O FishNet 4.7.3 não
+expõe contagem de bytes de socket: `NetworkTrafficStatistics.cs` inteiro está sob
+`#if UNITY_EDITOR || DEVELOPMENT_BUILD`, e as classes que guardam os contadores
+(`NetworkTraffic`, e os campos `InboundTraffic`/`OutboundTraffic` de
+`BidirectionalNetworkTraffic`) são `internal` ao assembly `FishNet.Runtime`. Medir banda
+nessa stack exige um `Transport` decorador que conte na passagem.
+
 **Por que `world_hash` é quantizado:** float não bate bit a bit entre instâncias, e não
 precisa. 0.01 u é uma ordem de grandeza abaixo do limiar de drift do briefing (0.15 u),
 então o hash detecta estado errado sem acusar ruído numérico.
@@ -98,6 +119,9 @@ Aperiódica. É o que o PASS/FAIL de late join e de queda do host lê.
 |---|---|---|
 | `lobby_created` | host criou o lobby | `lobby=<id64> code=<str>` |
 | `lobby_joined` | cliente entrou | `via=<invite\|code>` |
+| `transport_up` | o transporte subiu nesta instância | `papel=<host\|client> transporte=<nome> endereco=<str> porta=<int>` |
+| `peer_connected` | um par conectou (no servidor) ou o socket abriu (no cliente) | `conn=<id\|eu>` |
+| `peer_disconnected` | o simétrico do acima | `conn=<id\|eu>` |
 | `spawn_done` | os 150 corpos existem | `bodies=<int>` |
 | `late_join_begin` | instância entra depois do início | `at_t=<float>` |
 | `late_join_done` | estado recebido por inteiro | `elapsed_ms=<float> world_hash=<hex8>` |

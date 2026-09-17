@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using FishNet.Connection;
+using FishNet.Managing;
+using FishNet.Transporting;
 using UnityEngine;
 
 namespace Fslop.SpikeB
@@ -50,6 +53,22 @@ namespace Fslop.SpikeB
         /// </summary>
         int passosPorLado = 200;
 
+        /// <summary>
+        /// `host` roda o servidor e simula; `client` so conecta. Nao e host-mode do FishNet
+        /// (servidor + cliente local no mesmo processo) DE PROPOSITO: no host-mode o trafego
+        /// do jogador local nao passa por socket, e a medicao de banda do contrato ficaria
+        /// misturando o que atravessa a rede com o que nao atravessa.
+        /// </summary>
+        string papel = "host";
+
+        int identidade;
+        ushort porta = 7770;
+        string endereco = "127.0.0.1";
+
+        NetworkManager rede;
+
+        bool SouServidor => papel == "host";
+
         double inicio;
         int tick;
 
@@ -95,6 +114,17 @@ namespace Fslop.SpikeB
             inicio = Time.realtimeSinceStartupAsDouble;
 
             EmitirMeta();
+            LigarRede();
+
+            // O mundo so nasce no servidor. O cliente NAO instancia caixas nem portadores:
+            // se instanciasse, teria um mundo proprio parecido com o do host, e a medicao de
+            // drift compararia duas simulacoes independentes em vez de uma replicada — o
+            // numero sairia, e nao significaria nada.
+            if (!SouServidor)
+            {
+                Evento("spawn_done", "bodies=0 nota=cliente_nao_simula");
+                return;
+            }
 
             pilha = FindAnyObjectByType<BoxStackSpawner>();
             if (pilha != null)
@@ -110,6 +140,61 @@ namespace Fslop.SpikeB
             }
 
             Evento("spawn_done", "bodies=" + sondas.Count);
+        }
+
+        /// <summary>
+        /// Sobe o FishNet com Tugboat (UDP local). O servidor escuta; o cliente conecta.
+        /// </summary>
+        void LigarRede()
+        {
+            rede = FindAnyObjectByType<NetworkManager>();
+            if (rede == null)
+            {
+                Evento("exception", "where=NetworkManager_ausente_na_cena");
+                return;
+            }
+
+            var transporte = rede.TransportManager.Transport;
+            transporte.SetPort(porta);
+            transporte.SetClientAddress(endereco);
+
+            rede.ServerManager.OnRemoteConnectionState += AoMudarEstadoDoPar;
+            rede.ClientManager.OnClientConnectionState += AoMudarEstadoDoCliente;
+
+            if (SouServidor)
+            {
+                rede.ServerManager.StartConnection(porta);
+            }
+            else
+            {
+                rede.ClientManager.StartConnection(endereco, porta);
+            }
+
+            Evento("transport_up", string.Format(CultureInfo.InvariantCulture,
+                "papel={0} transporte={1} endereco={2} porta={3}",
+                papel, transporte.GetType().Name, endereco, porta));
+        }
+
+        /// <summary>Lado servidor: um par entrou ou saiu.</summary>
+        void AoMudarEstadoDoPar(NetworkConnection conexao, RemoteConnectionStateArgs args)
+        {
+            Evento(args.ConnectionState == RemoteConnectionState.Started
+                    ? "peer_connected"
+                    : "peer_disconnected",
+                "conn=" + conexao.ClientId);
+        }
+
+        /// <summary>Lado cliente: o proprio socket mudou de estado.</summary>
+        void AoMudarEstadoDoCliente(ClientConnectionStateArgs args)
+        {
+            if (args.ConnectionState == LocalConnectionState.Started)
+            {
+                Evento("peer_connected", "conn=eu");
+            }
+            else if (args.ConnectionState == LocalConnectionState.Stopped)
+            {
+                Evento("peer_disconnected", "conn=eu");
+            }
         }
 
         /// <summary>
@@ -250,14 +335,16 @@ namespace Fslop.SpikeB
             // registrava que medicao de fps sem dizer se foi no monitor local ou por sessao
             // remota nao e reprodutivel nesta maquina, que tem adaptador virtual do Parsec.
             Linha(string.Format(CultureInfo.InvariantCulture,
-                "[SOAK-META] run={0} stack=B role=host id=0 pid={1} build={2} engine={3} " +
-                "transport=local display={4} rtt_ms=0 loss_pct=0.0 bodies={5} started={6}",
+                "[SOAK-META] run={0} stack=B role={1} id={2} pid={3} build={4} engine={5} " +
+                "transport=local display={6} rtt_ms=0 loss_pct=0.0 bodies={7} started={8}",
                 run,
+                papel,
+                identidade,
                 System.Diagnostics.Process.GetCurrentProcess().Id,
                 build,
                 Application.unityVersion,
                 display,
-                EsperadoDeCorpos(),
+                SouServidor ? EsperadoDeCorpos() : 0,
                 DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)));
         }
 
@@ -290,12 +377,19 @@ namespace Fslop.SpikeB
             // "fps=1.0" para uma janela de 2.5 s. Divide-se pela janela que de fato passou.
             float janela = Mathf.Max(relogioDaAmostra, 1e-4f);
 
+            // rx/tx = -1 significa NAO INSTRUMENTADO, e nao "zero bytes". O FishNet 4.7.3 nao
+            // expoe contagem de bytes de socket: NetworkTrafficStatistics.cs inteiro esta sob
+            // `#if UNITY_EDITOR || DEVELOPMENT_BUILD`, e as classes que guardam os contadores
+            // (NetworkTraffic, e os campos Inbound/Outbound de BidirectionalNetworkTraffic)
+            // sao `internal` ao assembly FishNet.Runtime. Medir banda exige um Transport
+            // decorador que conte na passagem — e isso e change propria, nao um campo que eu
+            // possa preencher com palpite.
             Linha(string.Format(CultureInfo.InvariantCulture,
-                "[SOAK] t={0:F3} tick={1} role=host id=0 fps={2:F1} frame_p99_ms={3:F3} " +
-                "rx_KBps=0.0 tx_KBps=0.0 drift_max_u=-1 drift_p99_u=-1 " +
-                "carry_jump_u={4:F4} input_ms_p99=-1 bodies_awake={5} world_hash={6}",
-                Decorrido(), tick, quadrosNoSegundo / janela, p99, maiorSaltoDaViga, acordados,
-                HashDoMundo()));
+                "[SOAK] t={0:F3} tick={1} role={2} id={3} fps={4:F1} frame_p99_ms={5:F3} " +
+                "rx_KBps=-1 tx_KBps=-1 drift_max_u=-1 drift_p99_u=-1 " +
+                "carry_jump_u={6:F4} input_ms_p99=-1 bodies_awake={7} world_hash={8}",
+                Decorrido(), tick, papel, identidade, quadrosNoSegundo / janela, p99,
+                maiorSaltoDaViga, acordados, HashDoMundo()));
         }
 
         /// <summary>
@@ -352,8 +446,8 @@ namespace Fslop.SpikeB
         void Evento(string nome, string extras)
         {
             Linha(string.Format(CultureInfo.InvariantCulture,
-                "[SOAK-EV] t={0:F3} tick={1} role=host id=0 ev={2} {3}",
-                Decorrido(), tick, nome, extras));
+                "[SOAK-EV] t={0:F3} tick={1} role={2} id={3} ev={4} {5}",
+                Decorrido(), tick, papel, identidade, nome, extras));
         }
 
         /// <summary>
@@ -374,8 +468,8 @@ namespace Fslop.SpikeB
             onde.Replace('\n', ' ').Replace('\r', ' ');
 
             Linha(string.Format(CultureInfo.InvariantCulture,
-                "[SOAK-EV] t={0:F3} tick={1} role=host id=0 ev=exception where={2}",
-                Decorrido(), tick, onde.ToString()));
+                "[SOAK-EV] t={0:F3} tick={1} role={2} id={3} ev=exception where={4}",
+                Decorrido(), tick, papel, identidade, onde.ToString()));
         }
 
         void LerArgumentos()
@@ -398,6 +492,20 @@ namespace Fslop.SpikeB
                     case "-soakSeconds":
                         float.TryParse(args[i + 1], NumberStyles.Float,
                             CultureInfo.InvariantCulture, out duracaoAlvo);
+                        break;
+                    case "-soakRole":
+                        papel = args[i + 1] == "client" ? "client" : "host";
+                        break;
+                    case "-soakId":
+                        int.TryParse(args[i + 1], NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out identidade);
+                        break;
+                    case "-soakPort":
+                        ushort.TryParse(args[i + 1], NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out porta);
+                        break;
+                    case "-soakAddress":
+                        endereco = args[i + 1];
                         break;
                     case "-soakPatrolSteps":
                         int.TryParse(args[i + 1], NumberStyles.Integer,
