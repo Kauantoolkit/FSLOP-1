@@ -29,6 +29,7 @@ namespace Fslop.SpikeB.EditorTools
         public const string CameraName = "MainCamera";
         public const string SunName = "Sun";
         public const string BoxStackName = "BoxStack";
+        public const string BeamName = "Beam";
 
         // Medidas em unidades do motor. O contrato de medicao fixa 1 u = 1 m, entao
         // massa em kg e altura em metros sao a mesma escala e nao ha conversao escondida.
@@ -53,6 +54,7 @@ namespace Fslop.SpikeB.EditorTools
             CreatePlayer(playerMaterial);
             CreateCamera();
             CreateBoxStack();
+            CreateBeam();
 
             if (!AssetDatabase.IsValidFolder(SceneFolder))
             {
@@ -168,6 +170,24 @@ namespace Fslop.SpikeB.EditorTools
             var go = new GameObject(BoxStackName);
             go.transform.position = new Vector3(10f, 0f, 0f);
             go.AddComponent<BoxStackSpawner>();
+        }
+
+        /// <summary>
+        /// A viga de 6 m do teste minimo. Deitada no chao, longe do spawn do jogador e da
+        /// pilha (que fica em x=+10): a sonda precisa medir o agarre sem nada esbarrando.
+        /// </summary>
+        static void CreateBeam()
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = BeamName;
+            go.transform.localScale = new Vector3(CarryBeam.LengthU, 0.5f, 0.5f);
+            go.transform.position = new Vector3(-10f, 0.25f, 0f);
+
+            var body = go.AddComponent<Rigidbody>();
+            body.mass = 120f;
+            body.interpolation = RigidbodyInterpolation.Interpolate;
+
+            go.AddComponent<CarryBeam>();
         }
 
         static void CreateCamera()
