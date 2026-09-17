@@ -389,3 +389,36 @@ realidade** — que é a medida de quanto o modelo mente, e serve para todas as 
 **Sai daqui quando:** a mesma trajetória for medida com transporte real e o delta for
 publicado. Depende da 2ª máquina (`decisions/01`), como o item 7.
 
+## 17. O FishNet 4.7.3 não deixa contar bytes, e banda é campo do briefing
+
+**Estado:** aberto. Lacuna **da stack**, não do teste.
+
+O briefing manda reportar banda média e pico por cliente; o contrato tem `rx_KBps` e
+`tx_KBps`. A candidata B **não consegue emitir os dois**, e isso foi lido na versão exata
+em uso (17/09):
+
+- `Runtime/Managing/Statistic/NetworkTrafficStatistics.cs` **linha 1** é
+  `#if UNITY_EDITOR || DEVELOPMENT_BUILD` — num build de release a classe não existe;
+- `Runtime/Editor/NetworkProfiler/NetworkTraffic.cs:10` é `internal class NetworkTraffic`,
+  e os campos `InboundTraffic`/`OutboundTraffic` de `BidirectionalNetworkTraffic` também
+  são `internal` — inalcançáveis de `Assembly-CSharp` em **qualquer** build.
+
+**Nem um development build resolve**, porque a barreira é de visibilidade de assembly e não
+de compilação condicional.
+
+Enquanto isso, `rx/tx` saem `-1` (= não instrumentado, ver `docs/00`), e o avaliador diz
+`BANDA NAO INSTRUMENTADA` em vez de calcular média de `-1`.
+
+**A saída conhecida** é um `Transport` decorador que envolva o Tugboat e conte bytes em
+`SendToServer`/`SendToClient` e nos handlers de recebimento. O próprio FishNet tem o
+`Multipass`, que envolve transportes — então o padrão é suportado, não é gambiarra. Custo:
+uma classe que implementa ~20 membros abstratos por delegação, e que precisa ser reescrita a
+cada mudança de API do `Transport`.
+
+**Por que isso importa para o spike e não só para a B:** é uma diferença concreta entre as
+candidatas. Se Godot/GodotSteam expuser contagem de bytes de graça, isso é ponto na
+comparação — e é exatamente o tipo de custo escondido que o spike existe para achar.
+
+**Sai daqui quando:** o transporte decorador existir e uma corrida publicar banda real; ou
+quando se decidir que banda fica `[NÃO MEDIDO]` para a B e isso for dito no relatório.
+
