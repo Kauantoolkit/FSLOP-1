@@ -30,6 +30,7 @@ namespace Fslop.SpikeB.EditorTools
         public const string SunName = "Sun";
         public const string BoxStackName = "BoxStack";
         public const string BeamName = "Beam";
+        public const string SoakRunnerName = "SoakRunner";
 
         // Medidas em unidades do motor. O contrato de medicao fixa 1 u = 1 m, entao
         // massa em kg e altura em metros sao a mesma escala e nao ha conversao escondida.
@@ -55,6 +56,7 @@ namespace Fslop.SpikeB.EditorTools
             CreateCamera();
             CreateBoxStack();
             CreateBeam();
+            CreateSoakRunner();
 
             if (!AssetDatabase.IsValidFolder(SceneFolder))
             {
@@ -188,6 +190,17 @@ namespace Fslop.SpikeB.EditorTools
             body.interpolation = RigidbodyInterpolation.Interpolate;
 
             go.AddComponent<CarryBeam>();
+        }
+
+        /// <summary>
+        /// O emissor do contrato. So faz efeito em play mode: as sondas de edit mode rodam
+        /// Physics.Simulate direto e nunca chegam a um Start(). E por isso que ele pode
+        /// ficar na cena sem atrapalhar nenhuma medicao anterior.
+        /// </summary>
+        static void CreateSoakRunner()
+        {
+            var go = new GameObject(SoakRunnerName);
+            go.AddComponent<SoakRunner>();
         }
 
         static void CreateCamera()
