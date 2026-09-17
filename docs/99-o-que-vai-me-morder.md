@@ -84,10 +84,12 @@ menos do que estava escrito.
 
 **O que continua devendo:**
 
-- **a metade de rede inteira.** Nenhum byte por transporte, nenhum RTT, nenhuma
-  reconciliação. `input_ms_p99` continua sem medição para **qualquer** das quatro
-  abordagens, e a tabela comparativa de `decisions/09` segue sendo argumento, não resultado;
-- o orçamento que a rede tem para caber é `0.5 − 0.159 ≈ 0.34 u`. É esse o alvo;
+- **a metade de rede foi respondida por MODELO em 17/09** (`changes/08`, `decisions/10`),
+  não por rede: a abordagem escolhida dá `carry_jump_max_u = 0.2078` contra o limiar `0.5`,
+  e só a abordagem 1 reprova, por `input_ms`. **Nenhum byte passou por transporte nenhum**
+  — ver item 16 para o que o modelo não cobre;
+- o orçamento que a rede tem para caber era `0.5 − 0.159 ≈ 0.34 u`, e o modelo diz que ela
+  consome `0.11` dele. Sobra folga, **sob as hipóteses do item 16**;
 - a mola quase não puxa o jogador de volta. O dial existe e foi medido — `massScale` 20
   corta o atraso de pico para 31 ms mas custa 14% do deslocamento —, **e só tem curso para
   o lado de acoplar mais**: `0.05` é indistinguível de `1.00`. Quanto de retorno é bom
@@ -341,4 +343,32 @@ por mão, ou a mola escalando com o número de agarres —, e **quanto** é desi
 
 **Sai daqui quando:** o usuário disser se "até 4" é capacidade ou exigência. Se for
 exigência, vira change própria com número dele.
+
+## 16. Os números de rede são de um MODELO sem jitter, e o jitter é o que morde
+
+**Estado:** aberto por construção. É a contrapartida declarada de `decisions/10`.
+
+A tabela das quatro abordagens (`changes/08`) **não saiu de uma rede**. O host roda de
+verdade, a trajetória da viga é gravada, e sobre ela se aplica aritmética: amostragem a
+20 Hz, atraso fixo, perda com semente fixa, interpolação. Isso responde "o desenho aguenta?"
+e **não** responde "o meio aguenta?".
+
+O que o modelo deixa de fora, em ordem de quanto deve doer:
+
+1. **Jitter.** O modelo usa **RTT fixo**. E a varredura mostrou que atraso constante é
+   inofensivo — o que produz salto é a *variação*, que é exatamente o que não está aqui.
+   Este é o item: **o número publicado é otimista, e otimista justamente na dimensão que
+   mais importa.**
+2. **Rajada de perda.** A perda do modelo é independente por pacote. Perda real vem em
+   rajada, e duas ou três perdas seguidas estouram qualquer buffer. O joelho medido (entre
+   10% e 25% de perda independente) vai aparecer **antes** com rajada.
+3. **Custo de CPU** de serializar, enviar e aplicar snapshot — zero no modelo.
+4. **Tudo que é transporte:** handshake, MTU, reordenação, late join, queda de host. Item 7.
+
+**A defesa que existe:** o modelo é determinístico (semente fixa) e barato de varrer, então
+quando a rede real existir, rodar os dois sobre o mesmo cenário dá o **delta entre modelo e
+realidade** — que é a medida de quanto o modelo mente, e serve para todas as três stacks.
+
+**Sai daqui quando:** a mesma trajetória for medida com transporte real e o delta for
+publicado. Depende da 2ª máquina (`decisions/01`), como o item 7.
 
