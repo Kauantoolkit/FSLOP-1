@@ -58,9 +58,10 @@ monitor local. O `[SOAK-META]` **não tem campo para isso hoje**.
 **Sai daqui quando:** o contrato ganhar um campo `display=local|parsec` e a emissão nas
 stacks preenchê-lo. Antes da primeira medição de fps que conte como resultado.
 
-## 5. O agarre da viga está escolhido, e ainda não foi medido
+## 5. O agarre da viga está medido sem rede — e a rede é a metade que falta
 
-**Estado:** decidido em 06/09/2026, **zero medição**.
+**Estado:** decidido em 06/09/2026, **medido localmente em 17/09/2026** (commit `a6a8836`),
+**zero medição com rede**.
 
 Este item era "não está escolhido, e não é meu para escolher". Mudou: em 06/09 o usuário
 delegou explicitamente a escolha, e a decisão está em `tasks/FSLOP-1/decisions/09` —
@@ -69,22 +70,34 @@ no host e **nenhum joint no cliente**. Foi o próprio usuário quem abriu essa s
 perguntar se os personagens não poderiam simplesmente aplicar forças sobre a viga; ela não
 estava entre as três que eu tinha levantado.
 
-Por que funciona, em uma frase: um agarre mole **já atrasa a viga em relação à mão mesmo
+A justificativa era, em uma frase: um agarre mole **já atrasa a viga em relação à mão mesmo
 em jogo local**, e o atraso da rede se esconde dentro do atraso da física — sem predizer a
 viga, sem reconciliá-la, e sem alterar nenhuma restrição do briefing.
 
+**A medição de 17/09 confirmou metade disso.** O agarre é estável: `carry_jump_u` pior caso
+`0.1588 u` contra o limiar `0.5`, em 9 corridas, `exit=0`. Mas o atraso físico que ia
+servir de esconderijo é **transitório** — 70 a 125 ms no arranque, e **8 a 24 ms em
+regime**, porque a viga sai do chão e corpo no ar a velocidade constante não pede força da
+mola. **Um engasgo de rede durante o carregar em linha reta vai aparecer.** O esconderijo
+existe nas mudanças de direção, que é onde a rede também erra mais — favorável, mas bem
+menos do que estava escrito.
+
 **O que continua devendo:**
 
-- **nenhum número.** Nenhuma viga existe, nenhum joint foi criado, nenhuma corrida mediu
-  `carry_jump_u`. A decisão diz por onde começar;
-- a mola quase não puxa o jogador de volta — ele não é arrastado nem levantado pela viga.
-  Quanto de retorno é bom é número de sensação, e está no item 9;
+- **a metade de rede inteira.** Nenhum byte por transporte, nenhum RTT, nenhuma
+  reconciliação. `input_ms_p99` continua sem medição para **qualquer** das quatro
+  abordagens, e a tabela comparativa de `decisions/09` segue sendo argumento, não resultado;
+- o orçamento que a rede tem para caber é `0.5 − 0.159 ≈ 0.34 u`. É esse o alvo;
+- a mola quase não puxa o jogador de volta. O dial existe e foi medido — `massScale` 20
+  corta o atraso de pico para 31 ms mas custa 14% do deslocamento —, **e só tem curso para
+  o lado de acoplar mais**: `0.05` é indistinguível de `1.00`. Quanto de retorno é bom
+  continua sendo número de sensação, item 9;
 - sobra um acoplamento que a escolha não remove: o personagem **predito** colide com a
   viga **replicada**. É a mesma situação das 150 caixas, que o briefing já aceita.
 
-**Sai daqui quando:** a change 08 medir as quatro abordagens na stack B e a escolhida
-fechar `carry_jump_u ≤ 0.5` com `input_ms_p99 ≤ 100`. Se não fechar, o degrau seguinte já
-está escrito em `decisions/09`.
+**Sai daqui quando:** a metade de rede da change 08 medir as quatro abordagens sob RTT
+emulado e a escolhida fechar `carry_jump_u ≤ 0.5` com `input_ms_p99 ≤ 100`. Se não fechar,
+o degrau seguinte já está escrito em `decisions/09`.
 
 ## 6. A camada de rede da candidata C não está escolhida
 
@@ -178,6 +191,20 @@ acceleration      40 u/s²    PLACEHOLDER
 Os outros dois estão ali para a cápsula sair do chão e parar de patinar, não porque
 alguém os escolheu. O briefing diz que eu não decido o que é divertido.
 
+**Desde 17/09 a viga trouxe mais três**, e esses são os que mais mudam a sensação, porque
+decidem o peso que a mão sente:
+
+```
+CarryBeam.massKg           120 kg   PLACEHOLDER — 120 contra os 70 kg do jogador
+CarryBeam.spring          4000      PLACEHOLDER — é quem levanta a viga, não a força do jogador
+CarryBeam.damper           200      PLACEHOLDER
+joint.massScale              1      DIAL medido: 20 corta o atraso a 31 ms e custa 14% do avanço
+```
+
+`spring` e `damper` não são afinação: são o agarre. Com `spring` 4000 uma mão sozinha
+levanta os 120 kg (ver item 15). Baixar a mola torna a viga pesada e lenta; subir torna o
+agarre rígido e devolve o problema de rede que `decisions/09` foi escrita para evitar.
+
 **Sai daqui quando:** o usuário jogar e disser os números — ou disser que não importam
 para o spike, o que também é resposta.
 
@@ -268,4 +295,50 @@ que ele apareça no CI e não na mão do jogador.
 **Sai daqui quando:** o código passar a carregar os 64 bits inteiros (13 dígitos em vez
 de 7) — o que troca robustez por um código que ninguém dita por voz. É escolha, e não foi
 feita.
+
+## 14. `carry_jump_u` sozinho não reprova um agarre ruim
+
+**Estado:** aberto, e é um furo na métrica do briefing — não na implementação.
+
+Medido em 17/09 (`changes/07`). Na corrida em que o agarre é **assimétrico** — as mãos
+juntas numa ponta da viga —, o resultado é claramente péssimo: a viga inclina 10,50°, a
+ponta livre raspa o chão, e a folga entre mão e viga vai a **2,28 u (570 ms) e nunca mais
+volta** (`atraso_regime_u = 2.2656`). Em jogo, é carregar uma viga presa por um elástico.
+
+E `carry_jump_u` nessa corrida **melhora**: `0.0792`, o melhor de todas as 9 — contra
+`0.1588` do caso simétrico com 4 mãos, que é o bom. A razão é simples e perversa: a viga
+se move **menos**, e `carry_jump_u` mede quanto ela se move entre quadros. Uma viga travada
+no chão teria `carry_jump_u = 0` e passaria com nota máxima.
+
+O briefing fixa `carry_jump_u ≤ 0.5` e nada mais sobre o carregar. Do jeito que está, a
+métrica **reprova teleporte e aprova arrasto** — e arrasto é o outro jeito de o agarre ficar
+ruim.
+
+**A defesa começada:** a `BeamCarryProbe` passou a imprimir `atraso_regime_u` ao lado, que
+é exatamente o que separa os dois casos (0,03 no bom, 2,27 no ruim). Falta virar limiar no
+`docs/00-contrato-de-medicao.md`, e **o limiar é número de sensação** — quanto de atraso
+ainda é "carregar junto" e quanto já é elástico é design, item 9.
+
+**Sai daqui quando:** o contrato de medição ganhar um segundo campo para o carregar, com
+limiar escolhido por quem joga.
+
+## 15. "Carregável por até 4" não é imposto por nada
+
+**Estado:** aberto, e é design — não é meu para fechar.
+
+O briefing pede "1 objeto rígido longo (6 m) carregável por **até 4** jogadores ao mesmo
+tempo". Medido em 17/09: **uma mão sozinha levanta os 120 kg** (`subiu_u = 0.9318`,
+`altura_pos_agarre = 1.1818`). Mais mãos ajudam pouco — 4 mãos levantam a `1.3510`, ~14% a
+mais que uma.
+
+O motivo está no desenho do agarre: quem levanta é a **mola** (`spring` 4000), e a força
+dela não escala com quantos jogadores seguram. A massa da viga não é um limite; é só o que
+a mola tem que vencer, e ela vence.
+
+Ou seja: hoje "até 4" descreve quantos **cabem**, não quantos são **necessários**. Se o
+requisito quer dizer "precisa de 4", isso tem que virar regra explícita — um teto de força
+por mão, ou a mola escalando com o número de agarres —, e **quanto** é design.
+
+**Sai daqui quando:** o usuário disser se "até 4" é capacidade ou exigência. Se for
+exigência, vira change própria com número dele.
 
