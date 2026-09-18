@@ -302,6 +302,67 @@ namespace Fslop.SpikeB.EditorTools
 
             var sync = go.AddComponent<FishNet.Component.Transforming.NetworkTransform>();
             sync.SetSynchronizeScale(false);   // a viga nao muda de escala; byte a menos por pacote
+
+            ConfigurarSincroniaDeRigidbody(sync);
+        }
+
+        /// <summary>
+        /// Diz ao NetworkTransform que o objeto tem Rigidbody. Sem isto a replicacao FUNCIONA
+        /// E MENTE: na primeira medicao de drift o cliente seguia a viga a 1/3 da velocidade
+        /// do host, suavemente, sem erro nenhum no log (errors/07).
+        ///
+        /// O mecanismo, lido em NetworkTransform.cs:840-846: quando avisado do Rigidbody, o
+        /// FishNet torna o corpo kinematic no cliente E desliga `interpolation` junto. Os dois
+        /// andam em par porque o MoveToTarget dele LE a posicao de volta a cada quadro
+        /// (linha 1663, `MoveTowards(t.localPosition, ...)`) — e a interpolacao do Unity
+        /// reescreve transform.position a partir do buffer DELA, que esta atrasado. A leitura
+        /// de volta realimenta esse atraso e estrangula o avanco.
+        ///
+        /// CreateBeam liga RigidbodyInterpolation.Interpolate de proposito (a viga e o corpo
+        /// que a pessoa olha), e isso esta certo no HOST. Quem tem que desligar no cliente e
+        /// esta configuracao.
+        ///
+        /// Lido em NetworkTransform.cs:897-916: com `_clientAuthoritative` no default e sem
+        /// dono, CanMakeKinematic devolve FALSE no servidor (linha 912) e TRUE no cliente.
+        /// Ou seja, ligar isto NAO congela a viga no host — a fisica continua so no host,
+        /// como o briefing exige.
+        ///
+        /// Vai por SerializedObject porque o campo e [SerializeField] private e nao tem
+        /// setter publico (NetworkTransform.cs:356). E o mesmo valor que uma pessoa marcaria
+        /// no Inspector, gravado no .unity.
+        /// </summary>
+        static void ConfigurarSincroniaDeRigidbody(
+            FishNet.Component.Transforming.NetworkTransform sync)
+        {
+            const string campo = "_componentConfiguration";
+            var alvo = FishNet.Component.Transforming.NetworkTransform
+                .ComponentConfigurationType.Rigidbody;
+
+            var serializado = new SerializedObject(sync);
+            var propriedade = serializado.FindProperty(campo);
+
+            if (propriedade == null)
+            {
+                throw new System.Exception(
+                    "[BUILDER] campo '" + campo + "' nao existe mais no NetworkTransform. " +
+                    "A versao do FishNet mudou: reler NetworkTransform.cs antes de seguir.");
+            }
+
+            propriedade.enumValueIndex = (int)alvo;
+            serializado.ApplyModifiedPropertiesWithoutUndo();
+
+            // Conferencia no proprio objeto, nao no valor que eu acabei de escrever: se o
+            // indice do enum deixar de bater com o valor (ordem de declaracao mudando), isto
+            // acusa no ato em vez de virar bug silencioso de replicacao.
+            var relido = new SerializedObject(sync).FindProperty(campo);
+            if (relido.enumValueIndex != (int)alvo)
+            {
+                throw new System.Exception(string.Format(CultureInfo.InvariantCulture,
+                    "[BUILDER] '{0}' ficou em {1}, esperado {2} ({3}).",
+                    campo, relido.enumValueIndex, (int)alvo, alvo));
+            }
+
+            Log("NetworkTransform da viga: " + campo + "=" + alvo);
         }
 
         /// <summary>
