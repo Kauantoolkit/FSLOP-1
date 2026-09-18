@@ -509,6 +509,7 @@ namespace Fslop.SpikeB.EditorTools
             go.transform.rotation = Quaternion.Euler(20f, 0f, 0f);
 
             go.AddComponent<Camera>();
+            go.AddComponent<FollowCamera>();
 
             // Sem AudioListener: o briefing proibe audio. O Unity avisa que nao ha
             // listener na cena, e o aviso e esperado.

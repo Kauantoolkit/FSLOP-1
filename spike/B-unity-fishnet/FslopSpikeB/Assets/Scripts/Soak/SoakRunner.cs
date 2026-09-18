@@ -61,6 +61,16 @@ namespace Fslop.SpikeB
         /// tem. Medir os dois lados do mesmo dial e o ponto.
         /// </summary>
         int interpolacao;
+
+        /// <summary>
+        /// `-soakHuman 1`: o portador 0 vira a pessoa no teclado e a camera o segue. Os
+        /// outros tres continuam roteirizados, entao a viga segue carregada por 4.
+        ///
+        /// Existe porque, ate 19/09, NINGUEM tinha jogado isto — o CapsuleController estava
+        /// escrito desde a changes/04 e nunca foi executado. Metrica de "responde em menos
+        /// de 100ms PERCEBIDOS" nao se fecha sem alguem percebendo.
+        /// </summary>
+        bool humano;
         float duracaoAlvo = 30f;
 
         /// <summary>
@@ -615,9 +625,26 @@ namespace Fslop.SpikeB
                 return;
             }
 
-            // O Player da cena vira o portador 0. O CapsuleController le teclado, e num soak
-            // automatizado nao existe teclado: quem comanda e o roteiro.
-            DesligarTeclado(modelo);
+            // O Player da cena vira o portador 0. Em corrida automatizada o CapsuleController
+            // sai, porque nao existe teclado e quem comanda e o roteiro.
+            //
+            // Com -soakHuman 1 ele FICA, e o portador 0 passa a ser a pessoa: o roteiro para
+            // de comandar esse corpo (ver Roteiro) e a camera passa a segui-lo. Os outros 3
+            // continuam roteirizados, entao a viga continua sendo carregada por 4 — que e o
+            // teste minimo do briefing, agora com uma das maos sendo de gente.
+            if (!humano)
+            {
+                DesligarTeclado(modelo);
+            }
+            else
+            {
+                var camera = FindAnyObjectByType<FollowCamera>();
+                if (camera != null)
+                {
+                    camera.Follow(modelo.transform);
+                }
+            }
+
             portadores.Add(modelo);
 
             float meia = CarryBeam.LengthU * 0.5f - 0.5f;
@@ -663,6 +690,17 @@ namespace Fslop.SpikeB
 
             for (int i = 0; i < portadores.Count; i++)
             {
+                // Com -soakHuman, o portador 0 e a pessoa: quem chama Step nele e o
+                // CapsuleController, no FixedUpdate dele. Chamar aqui tambem faria DOIS
+                // comandos no mesmo corpo no mesmo passo, e o ultimo a rodar venceria — o
+                // teclado pareceria nao responder, de forma intermitente e dificil de
+                // explicar. E o mesmo erro do errors/07 noutra roupa: dois donos da mesma
+                // velocidade.
+                if (humano && i == 0)
+                {
+                    continue;
+                }
+
                 var motor = portadores[i].GetComponent<CapsuleMotor>();
                 if (motor != null)
                 {
@@ -1008,6 +1046,10 @@ namespace Fslop.SpikeB
                         double.TryParse(args[i + 1], NumberStyles.Float,
                             CultureInfo.InvariantCulture, out lossPct);
                         lossPct = System.Math.Max(lossPct, 0d);
+                        break;
+
+                    case "-soakHuman":
+                        humano = args[i + 1] == "1";
                         break;
 
                     case "-soakInterp":
