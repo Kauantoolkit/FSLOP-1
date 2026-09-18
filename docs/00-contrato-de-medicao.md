@@ -69,8 +69,8 @@ Uma por segundo, por instância. É a série temporal.
 | `fps` | todos | quadros no último segundo. Não é média móvel. |
 | `frame_p99_ms` | todos | p99 dos tempos de quadro **do último segundo** |
 | `rx_KBps` / `tx_KBps` | todos | bytes de socket no último segundo ÷ 1024 |
-| `drift_max_u` | **só cliente** | maior distância entre a posição desta instância e a do host **no mesmo `tick`**, sobre os corpos-sonda. `-1` no host. |
-| `drift_p99_u` | **só cliente** | p99 da mesma distância. `-1` no host. |
+| `drift_max_u` | **ninguém** | `-1` nos dois papéis. Ver "drift não cabe na linha de amostra", abaixo. |
+| `drift_p99_u` | **ninguém** | idem |
 | `carry_jump_u` | todos | maior salto de posição da viga entre dois quadros **consecutivos** no último segundo |
 | `input_ms_p99` | **só cliente** | p99 do intervalo entre o input ser lido e o próprio personagem se mover na tela local |
 | `bodies_awake` | todos | rigidbodies não adormecidos. É o que explica o pico de banda. |
@@ -107,7 +107,58 @@ nessa stack exige um `Transport` decorador que conte na passagem.
 precisa. 0.01 u é uma ordem de grandeza abaixo do limiar de drift do briefing (0.15 u),
 então o hash detecta estado errado sem acusar ruído numérico.
 
-## 3. Linha de evento — `[SOAK-EV]`
+### Drift não cabe na linha de amostra — e a versão antiga deste contrato estava errada
+
+**Corrigido em 18/09/2026.** Até aqui esta tabela dizia que `drift_max_u` era emitido
+"**só cliente**", definido como a distância entre a posição dele e a do host "no mesmo
+`tick`". **Isso é impossível de calcular dentro do cliente**: no instante em que ele emite a
+amostra, ele não conhece — e não pode conhecer — a posição autoritativa do host naquele
+tick. Tudo que ele tem é o que chegou pela rede, que é justamente o que se quer auditar.
+Medir drift contra o que a rede entregou é medir a rede contra ela mesma.
+
+Drift é, por natureza, uma medida **entre duas instâncias**, e por isso ela sai do emissor e
+vai para o avaliador, que tem os dois logs. Os dois campos ficam na linha de amostra, com
+`-1` nos dois papéis, porque `-1` já quer dizer exatamente isto: *esta instância não mede
+isto*.
+
+## 3. Linha de posição — `[SOAK-POS]`
+
+Uma por tick de rede, por instância, **enquanto o corpo observado existir**. É a matéria-prima
+do drift e o único par de séries que as duas pontas produzem sobre a mesma coisa.
+
+```
+[SOAK-POS] ntick=<uint> role=<host|client> id=<0..3> x=<float> y=<float> z=<float>
+```
+
+| campo | o que é |
+|---|---|
+| `ntick` | tick **da rede**, não o `tick` local das outras linhas. É a chave do cruzamento. |
+| `x` `y` `z` | posição do corpo observado, 4 casas (0,1 mm — o limiar do briefing é 0,15 u) |
+
+**Por que `ntick` e não o `tick` das linhas `[SOAK]`.** O `tick` das outras linhas é um
+contador local que começa em zero quando **o processo** sobe, e as instâncias sobem em
+instantes diferentes — casar por ele compararia momentos diferentes da simulação. O tick de
+rede é o relógio do servidor, e é o único eixo comum.
+
+**A ressalva que precisa sobreviver até o relatório.** No cliente, esse tick é uma
+*aproximação* do tick do servidor e pode subir **e descer** conforme o timing se ajusta
+(candidata B: `TimeManager.cs:126`). O eixo da comparação tem erro próprio. A 30 Hz um tick
+vale 33 ms; com a viga a ~0,5 u/s isso dá ~0,017 u de erro de eixo contra o limite de 0,15 u
+— uma ordem de grandeza abaixo, mas não zero. Todo número de drift sai acompanhado do
+`TickRate` da corrida.
+
+**O que o avaliador extrai das duas séries, e são dois números, não um:**
+
+| número | o que é | por que separado |
+|---|---|---|
+| `drift_mesmo_ntick` | distância entre host e cliente no **mesmo** `ntick` | é o erro de posição que uma pessoa veria na tela: inclui o atraso do buffer de interpolação |
+| `drift_alinhado` + `atraso_ticks` | menor distância ao deslocar a série do cliente em até ±N ticks, e de quanto foi o deslocamento | separa **atraso** de **divergência**. Um cliente 3 ticks atrás mas perfeitamente correto não é a mesma falha que um cliente no tick certo e no lugar errado |
+
+O limiar de 0,15 u do briefing é aplicado ao **`drift_mesmo_ntick`**, porque é ele que
+descreve o que se vê. O `drift_alinhado` não tem limiar: ele é diagnóstico, e existe para
+que um FAIL possa ser explicado em vez de só anunciado.
+
+## 4. Linha de evento — `[SOAK-EV]`
 
 Aperiódica. É o que o PASS/FAIL de late join e de queda do host lê.
 

@@ -108,6 +108,14 @@ namespace Fslop.SpikeB
         void OnDestroy()
         {
             Application.logMessageReceived -= AoReceberLog;
+
+            // O TimeManager pode sobreviver a este objeto na ordem de destruicao da cena.
+            // Emitir [SOAK-POS] depois do shutdown sujaria a serie com ticks de um mundo
+            // que ja parou.
+            if (rede != null && rede.TimeManager != null)
+            {
+                rede.TimeManager.OnPostTick -= AoPassarOTickDaRede;
+            }
         }
 
         void Start()
@@ -226,6 +234,14 @@ namespace Fslop.SpikeB
             }
 
             viga = achada;
+
+            // Redundante desde que o NetworkTransform passou a saber do Rigidbody
+            // (ConfigurarSincroniaDeRigidbody no gerador de cena): ele ja torna o corpo
+            // kinematic no cliente. Fica porque e barato e porque nao depende de a
+            // configuracao da cena estar certa — se ela se perder numa regeracao, a viga
+            // ainda nao cai por gravidade local. O que NAO da para fazer daqui e desligar
+            // `interpolation`: isso e o par obrigatorio do kinematic (errors/07) e quem
+            // tem que fazer e a configuracao, no momento certo do ciclo de vida.
             viga.Body.isKinematic = true;
 
             // A viga entra nas sondas do cliente: e o unico corpo replicado, entao e sobre
@@ -261,6 +277,7 @@ namespace Fslop.SpikeB
             rede.ServerManager.OnRemoteConnectionState += AoMudarEstadoDoPar;
             rede.ServerManager.OnAuthenticationResult += AoAutenticar;
             rede.ClientManager.OnClientConnectionState += AoMudarEstadoDoCliente;
+            rede.TimeManager.OnPostTick += AoPassarOTickDaRede;
 
             if (SouServidor)
             {
@@ -293,6 +310,40 @@ namespace Fslop.SpikeB
             rede.SceneManager.AddConnectionToScene(conexao, gameObject.scene);
             Evento("peer_authenticated", string.Format(CultureInfo.InvariantCulture,
                 "conn={0} cena={1}", conexao.ClientId, gameObject.scene.name));
+        }
+
+        /// <summary>
+        /// Emite a posicao da viga contra o RELOGIO DA REDE, uma linha por tick, nas duas
+        /// pontas. E a unica forma de medir drift host x cliente: a comparacao NAO pode
+        /// acontecer dentro de um processo so, porque nenhum dos dois conhece a verdade do
+        /// outro. Quem cruza as duas series e o avaliador, depois da corrida, casando pelo
+        /// ntick.
+        ///
+        /// Por que TimeManager.Tick e nao o `tick` local deste script: o `tick` daqui e um
+        /// contador de FixedUpdate que comeca em zero quando o PROCESSO sobe, e os dois
+        /// processos sobem em instantes diferentes — casar por ele compararia momentos
+        /// diferentes da simulacao. O Tick do FishNet e o relogio do servidor, e o cliente
+        /// o acompanha.
+        ///
+        /// RESSALVA que precisa sobreviver ate o relatorio, lida em TimeManager.cs:126: no
+        /// cliente esse valor e uma APROXIMACAO do tick do servidor e "may increase and
+        /// decrease as timing adjusts". O eixo da comparacao tem erro proprio. A 30 Hz
+        /// (TickRate default, TimeManager.cs:184) um tick vale 33 ms; com a viga a ~0.5 u/s
+        /// isso da ~0.017 u de erro de eixo, contra o limite de 0.15 u do briefing — uma
+        /// ordem de grandeza abaixo, mas nao zero, e por isso fica escrito.
+        /// </summary>
+        void AoPassarOTickDaRede()
+        {
+            if (viga == null)
+            {
+                return;
+            }
+
+            Vector3 p = viga.transform.position;
+
+            Debug.Log(string.Format(CultureInfo.InvariantCulture,
+                "[SOAK-POS] ntick={0} role={1} id={2} x={3:F4} y={4:F4} z={5:F4}",
+                rede.TimeManager.Tick, papel, identidade, p.x, p.y, p.z));
         }
 
         /// <summary>Lado servidor: um par entrou ou saiu.</summary>
