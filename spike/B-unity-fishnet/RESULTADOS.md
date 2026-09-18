@@ -183,9 +183,28 @@ E é **deliberado**: o comentário da própria biblioteca diz que descartar o co
 atraso** — a troca certa para a maioria dos jogos, e exatamente a errada para um briefing que
 exige "o objeto carregado não teleporta".
 
-**Existe um botão, e ele não foi medido:** o corte dispara em `_interpolation + 3`, então
-interpolação maior tolera rajada maior — ao custo de mais atraso, que é justamente o que o
-item 19 já não tem folga para pagar.
+### O dial: conserta o teleporte, não conserta o drift
+
+O corte dispara em `_interpolation + 3`, então interpolação maior tolera rajada maior. Medido a
+3% de perda e 150 ms, duas corridas por ponto:
+
+| `_interpolation` | atraso | `drift_mesmo_ntick` p99 | `drift_alinhado` | teleporte no cliente |
+|---|---|---|---|---|
+| **2** (default) | 7,6 – 8,9 t | `1,16 u` | `0,090` – `0,408 u` | **3 de 4** |
+| **4** | 9,5 – 9,6 t | `1,33` – `1,35 u` | `0,026` – `0,036 u` | **0 de 2** |
+| **6** | 11,2 – 11,3 t | `1,55` – `1,64 u` | `0,019` – `0,198 u` | **0 de 2** |
+| **10** | 14,9 – 15,2 t | `2,03` – `2,07 u` | `0,019` – `0,021 u` | **0 de 2** |
+
+**O teleporte tem conserto e é barato:** `_interpolation = 4` o eliminou em 2 de 2 corridas e
+derrubou a divergência para `0,026`–`0,036 u`, ao preço de **+1,5 tick ≈ 50 ms**.
+
+**O drift de `0,15 u` é inalcançável em qualquer ponto do dial.** No melhor caso o erro visível
+é `1,16 u`, e ele **cresce** com a interpolação até `2,07`. O dial move esse número na direção
+errada — erro visível *é* atraso × velocidade.
+
+**As duas métricas puxam para lados opostos**, e não existe valor que satisfaça as duas. **A
+escolha é do usuário**, porque o que se compra com 50 ms é como o jogo responde, e o briefing
+diz que design não é meu. Saídas e preços em `docs/99` item 22.
 
 **Até 1% de perda, a divergência é desprezível** (`0,018`–`0,019 u`, contra o limiar de `0,15`).
 A fronteira está entre 1% e 3%, com **um ponto de cada lado** e um contraexemplo dentro do 3%.

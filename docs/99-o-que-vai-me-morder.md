@@ -683,3 +683,54 @@ briefing que diz "objeto carregado **não teleporta**", é exatamente a troca er
 a 3%, e uma varredura de `_interpolation` disser se existe valor que segure a rajada sem
 estourar o atraso. Aí vira pergunta com fundamento para o usuário — e é pergunta de
 arquitetura (aceitar o salto, aceitar mais atraso, ou trocar de abordagem), não ajuste.
+
+## 22. O dial de interpolação resolve o teleporte e NÃO resolve o drift — e é escolha do usuário
+
+**Estado:** medido. **A decisão é do usuário**, porque o que se troca é sensação.
+
+O item 21 identificou o botão: o descarte que faz a viga saltar dispara quando a fila passa de
+`_interpolation + 3`, então interpolação maior tolera rajada maior — ao custo de mais atraso.
+Isso agora está **medido**, a 3% de perda e 150 ms de RTT:
+
+| `_interpolation` | atraso | `drift_mesmo_ntick` p99 | `drift_alinhado` | teleporte no cliente |
+|---|---|---|---|---|
+| **2** (default) | 7,6 – 8,9 t | `1,16 u` | `0,090` – `0,408 u` | **3 de 4** |
+| **4** | 9,5 – 9,6 t | `1,33` – `1,35 u` | `0,026` – `0,036 u` | **0 de 2** |
+| **6** | 11,2 – 11,3 t | `1,55` – `1,64 u` | `0,019` – `0,198 u` | **0 de 2** |
+| **10** | 14,9 – 15,2 t | `2,03` – `2,07 u` | `0,019` – `0,021 u` | **0 de 2** |
+
+### As três coisas que isto estabelece
+
+**1. O teleporte tem conserto, e é barato.** `_interpolation = 4` eliminou o salto em 2 de 2
+corridas e derrubou a divergência de `0,090`–`0,408` para `0,026`–`0,036 u`. O preço é
+**+1,5 tick ≈ 50 ms** de atraso. A exigência do briefing *"o objeto carregado não teleporta"*
+passa a ser cumprível.
+
+**2. O drift de `0,15 u` é inalcançável em qualquer ponto do dial.** No melhor caso (interp 2)
+o erro visível é `1,16 u`; ele **cresce monotonicamente** até `2,07 u`. Não há ajuste que o
+leve a `0,15` — o dial move o número na direção **errada**, porque erro visível *é* atraso ×
+velocidade. Isto confirma com dado a aritmética do item 19, que era só conta.
+
+**3. As duas métricas puxam para lados opostos.** Subir a interpolação conserta o teleporte e
+piora o drift; baixar faz o inverso. **Não existe valor que satisfaça as duas**, e isso não é
+limitação da candidata B: é a consequência de medir *erro de posição no mesmo instante* num
+sistema que replica por interpolação.
+
+### Por que a decisão não é minha
+
+O que se compra com `+50 ms` de atraso é **como o jogo responde**. Isso é sensação, e o
+briefing é explícito: *"Se uma decisão depender de julgamento sobre o que é divertido: PARE e
+me pergunte. Você não decide design."*
+
+**As saídas, com o preço de cada uma medido:**
+
+| saída | efeito | preço |
+|---|---|---|
+| `_interpolation = 4` | acaba com o teleporte | +50 ms de atraso; drift visível `1,16 → 1,34 u` |
+| manter `2` | menor atraso possível | a viga salta em ~3 de cada 4 corridas a 3% de perda |
+| relaxar o limiar de `0,15 u` | o drift vira métrica atingível | é mudar o briefing, não o código |
+| medir drift **alinhado** em vez de no mesmo tick | `0,026 u` a interp 4, passaria com folga | é trocar a régua depois de ver o resultado |
+
+**Sai daqui quando:** o usuário disser qual atraso é aceitável — ou quando as candidatas A e C
+mostrarem se alguma consegue o que a B não consegue, o que transformaria isto em ponto de
+comparação em vez de limite da abordagem.
