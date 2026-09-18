@@ -413,14 +413,18 @@ def checar_input(corrida):
 
 
 def serie_de_posicao(corrida, papel, identidade=None):
-    """Posicoes de uma instancia, indexadas pelo tick DA REDE.
+    """Posicoes de uma instancia, por CORPO e por tick de rede.
 
-    Devolve {ntick: (x, y, z)}. Linha com campo faltando ou ilegivel e descartada
-    em silencio de proposito: o contrato ja obriga o emissor, e uma linha torta nao
-    pode derrubar a avaliacao inteira. Quem acusa emissor quebrado e
-    checar_integridade, contando linhas.
+    Devolve {obj: {ntick: (x, y, z)}}. O `obj` e o ObjectId do FishNet, que e o unico
+    identificador que vale nas duas pontas: nome nao serve (o cliente recebe clones do
+    prefab, e nome nao e sincronizado) e posicao em lista tambem nao (a ordem de
+    chegada no cliente nao e a de criacao no host).
+
+    Linha com campo faltando ou ilegivel e descartada em silencio de proposito: o
+    contrato ja obriga o emissor, e uma linha torta nao pode derrubar a avaliacao
+    inteira. Quem acusa emissor quebrado e checar_integridade, contando linhas.
     """
-    serie = {}
+    series = {}
     for p in corrida.posicoes:
         if p.get("role") != papel:
             continue
@@ -430,8 +434,19 @@ def serie_de_posicao(corrida, papel, identidade=None):
         x, y, z = num(p, "x"), num(p, "y"), num(p, "z")
         if None in (ntick, x, y, z):
             continue
-        serie[int(ntick)] = (x, y, z)
-    return serie
+        # `obj` ausente = formato anterior a changes/19, com um corpo so. Cai num
+        # balde unico em vez de ser descartado: log antigo continua avaliavel.
+        obj = p.get("obj", "_unico")
+        series.setdefault(obj, {})[int(ntick)] = (x, y, z)
+    return series
+
+
+def ticks_de(series):
+    """Todos os ntick presentes em {obj: {ntick: pos}}, sem repetir."""
+    vistos = set()
+    for por_tick in series.values():
+        vistos.update(por_tick)
+    return vistos
 
 
 def tempo_do_host_por_ntick(corrida):
@@ -456,16 +471,28 @@ def distancia(a, b):
 
 
 def distancias_com_deslocamento(host, cliente, deslocamento):
-    """Distancias host x cliente quando a serie do cliente e deslocada N ticks.
+    """Distancias host x cliente, por corpo, com a serie do cliente deslocada N ticks.
 
-    `deslocamento` positivo significa que o cliente esta ATRASADO: o que ele mostra
-    no tick T e comparado com o que o host tinha em T - deslocamento.
+    `deslocamento` positivo significa que o cliente esta ATRASADO: o que ele mostra no
+    tick T e comparado com o que o host tinha em T - deslocamento.
+
+    Devolve [(distancia, obj, ntick)], para o pior caso poder dizer QUAL corpo e
+    QUANDO — "0.68 u" sem isso nao diz se e a viga ou uma caixa que caiu da pilha.
+
+    O deslocamento e o MESMO para todos os corpos de propósito: atraso e propriedade
+    da conexao, nao de cada objeto. Buscar um deslocamento por corpo deixaria cada um
+    escolher o que mais o favorece, e o numero resultante nao descreveria nada.
     """
-    return [
-        distancia(host[ntick - deslocamento], pos_cliente)
-        for ntick, pos_cliente in cliente.items()
-        if (ntick - deslocamento) in host
-    ]
+    saida = []
+    for obj, por_tick_cliente in cliente.items():
+        por_tick_host = host.get(obj)
+        if not por_tick_host:
+            continue
+        for ntick, pos_cliente in por_tick_cliente.items():
+            pos_host = por_tick_host.get(ntick - deslocamento)
+            if pos_host is not None:
+                saida.append((distancia(pos_host, pos_cliente), obj, ntick))
+    return saida
 
 
 def maior_distancia_com_deslocamento(host, cliente, deslocamento):
@@ -499,17 +526,21 @@ def checar_drift(corrida):
     # O corte do briefing: "drift ... apos 5 min de simulacao continua". Vale o
     # relogio do HOST, e nenhum tick sem tempo conhecido entra — sem o t nao da para
     # afirmar que ele esta depois do corte, e afirmar seria inventar cobertura.
-    host = {
-        ntick: pos for ntick, pos in host_completo.items()
-        if tempos.get(ntick) is not None and tempos[ntick] >= apos
-    }
+    host = {}
+    for obj, por_tick in host_completo.items():
+        depois = {
+            ntick: pos for ntick, pos in por_tick.items()
+            if tempos.get(ntick) is not None and tempos[ntick] >= apos
+        }
+        if depois:
+            host[obj] = depois
 
     if host_completo and not host:
         return Resultado(
             "drift", "FAIL",
             "a corrida nao chegou aos %.0f s que o briefing exige: o host tem %d tick(s) "
             "de posicao, nenhum depois do corte. Drift so significa algo depois de o "
-            "mundo simular continuamente." % (apos, len(host_completo))
+            "mundo simular continuamente." % (apos, len(ticks_de(host_completo)))
         )
 
     if not host:
@@ -534,12 +565,11 @@ def checar_drift(corrida):
         cliente = serie_de_posicao(corrida, "client", identidade)
         no_tick = distancias_com_deslocamento(host, cliente, 0)
         if not no_tick:
-            piores.append((identidade, None, None, None, 0, None))
+            piores.append({"id": identidade, "mesmo": None})
             continue
 
-        mesmo = max(no_tick)
-        p99 = percentil(no_tick, 0.99)
-        pares_usados = len(no_tick)
+        distancias = [d for d, _, _ in no_tick]
+        pior_par = max(no_tick)
 
         melhor = None
         melhor_deslocamento = 0
@@ -547,27 +577,36 @@ def checar_drift(corrida):
             valor, usados = maior_distancia_com_deslocamento(host, cliente, deslocamento)
             if valor is None or usados == 0:
                 continue
-            if melhor is None or valor < melhor:
-                melhor = valor
+            if melhor is None or valor[0] < melhor:
+                melhor = valor[0]
                 melhor_deslocamento = deslocamento
 
-        piores.append((identidade, mesmo, melhor, melhor_deslocamento, pares_usados, p99))
+        piores.append({
+            "id": identidade,
+            "mesmo": pior_par[0],
+            "obj": pior_par[1],
+            "ntick": pior_par[2],
+            "alinhado": melhor,
+            "atraso": melhor_deslocamento,
+            "pares": len(no_tick),
+            "corpos": len(set(cliente) & set(host)),
+            "p99": percentil(distancias, 0.99),
+        })
 
-    sem_par = [p for p in piores if p[1] is None]
+    sem_par = [p for p in piores if p["mesmo"] is None]
     if sem_par:
         return Resultado(
             "drift", "FAIL",
-            "cliente(s) %s sem nenhum ntick em comum com o host - as series existem "
-            "mas nao se sobrepoem, entao nada foi comparado"
-            % ", ".join(str(p[0]) for p in sem_par)
+            "cliente(s) %s sem nenhum par (corpo, ntick) em comum com o host - as "
+            "series existem mas nao se cruzam, entao nada foi comparado"
+            % ", ".join(str(p["id"]) for p in sem_par)
         )
 
-    acima = [p for p in piores if p[1] >= limite]
-    pior = max(piores, key=lambda p: p[1])
-    identidade, mesmo, alinhado, deslocamento, pares_usados, p99 = pior
+    acima = [p for p in piores if p["mesmo"] >= limite]
+    pior = max(piores, key=lambda p: p["mesmo"])
 
     aviso = ""
-    if deslocamento >= BUSCA_ATRASO_TICKS:
+    if pior["atraso"] >= BUSCA_ATRASO_TICKS:
         aviso = (" | ATENCAO: o alinhamento encostou no teto de busca (%d ticks), "
                  "entao esse 'atraso' nao e atraso - a serie do cliente nao casa com "
                  "a do host em nenhum deslocamento procurado"
@@ -576,10 +615,11 @@ def checar_drift(corrida):
     status = "PASS" if not acima else "FAIL"
     return Resultado(
         "drift", status,
-        "pior id=%s: drift_mesmo_ntick max %.4f u p99 %.4f u (limite %.2f) | "
-        "alinhado %.4f u com atraso de %d tick(s) | %d par(es) de ntick comparados, "
-        "%d cliente(s) acima do limite%s"
-        % (identidade, mesmo, p99, limite, alinhado, deslocamento, pares_usados,
+        "pior id=%s: drift_mesmo_ntick max %.4f u (obj=%s ntick=%s) p99 %.4f u "
+        "(limite %.2f) | alinhado %.4f u com atraso de %d tick(s) | %d corpo(s) e "
+        "%d par(es) comparados, %d cliente(s) acima do limite%s"
+        % (pior["id"], pior["mesmo"], pior["obj"], pior["ntick"], pior["p99"], limite,
+           pior["alinhado"], pior["atraso"], pior["corpos"], pior["pares"],
            len(acima), aviso)
     )
 

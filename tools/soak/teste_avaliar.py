@@ -74,9 +74,10 @@ def pos_do_host(i):
     return (i * PASSO_U, 1.0, 0.0)
 
 
-def posicao(role, ident, ntick, t, xyz):
-    return ("[SOAK-POS] ntick=%d t=%.3f role=%s id=%s x=%.4f y=%.4f z=%.4f"
-            % (ntick, t, role, ident, xyz[0], xyz[1], xyz[2]))
+def posicao(role, ident, ntick, t, xyz, obj=None):
+    campo_obj = "" if obj is None else (" obj=%s" % obj)
+    return ("[SOAK-POS] ntick=%d t=%.3f role=%s id=%s%s x=%.4f y=%.4f z=%.4f"
+            % (ntick, t, role, ident, campo_obj, xyz[0], xyz[1], xyz[2]))
 
 
 def serie_pos(role, ident, desloca_ticks=0, offset_y=0.0, so_antes_de=None,
@@ -407,6 +408,76 @@ def trocar_late_join(arquivos, **campos):
     return arquivos
 
 
+# --------------------------------------------------------------------------
+# Drift com VARIOS corpos (changes/19). Os casos acima usam uma serie so, que
+# cai no balde de compatibilidade do avaliador — ou seja, NAO exercitam o
+# cruzamento por ObjectId. Estes exercitam.
+# --------------------------------------------------------------------------
+
+CORPOS_NA_SERIE = ["11", "12", "13"]
+
+
+def serie_multi(role, ident, obj_torto=None, erro_y=0.0):
+    """Tres corpos, cada um numa reta propria. `obj_torto` recebe erro em y."""
+    linhas = []
+    for i in range(N_POS):
+        ntick = NTICK0 + i
+        t = T0 + i / HZ_REDE
+        for k, obj in enumerate(CORPOS_NA_SERIE):
+            x, y, z = pos_do_host(i)
+            # Cada corpo numa faixa de z diferente, para o pior caso poder ser
+            # atribuido a um deles sem ambiguidade.
+            z += k * 10.0
+            if obj == obj_torto:
+                y += erro_y
+            linhas.append(posicao(role, ident, ntick, t, (x, y, z), obj=obj))
+    return linhas
+
+
+def montar_multi(obj_torto=None, erro_y=0.0):
+    a = montar_base()
+    a["inst0-host.log"] = sem_linhas_de_posicao(a["inst0-host.log"]) \
+        + serie_multi("host", 0)
+    a["inst1-client.log"] = sem_linhas_de_posicao(a["inst1-client.log"]) \
+        + serie_multi("client", 1, obj_torto=obj_torto, erro_y=erro_y)
+    return a
+
+
+def caso_drift_multi_corpos_ok():
+    """Tres corpos, todos certos: PASS, e o avaliador tem que dizer que sao TRES.
+
+    Sem esta conferencia, um cruzamento que casasse so um corpo passaria igual — e
+    seria um verde obtido por comparar 1/3 do mundo.
+    """
+    codigo, res = rodar(montar_multi())
+    r = res.get("drift")
+    if r is None:
+        return False, "drift nem foi avaliado"
+    if r.status != "PASS":
+        return False, "esperava PASS, veio %s: %s" % (r.status, r.detalhe)
+    if "3 corpo(s)" not in r.detalhe:
+        return False, "nao comparou os 3 corpos: %s" % r.detalhe
+    return True, "drift=%s (codigo %d): %s" % (r.status, codigo, r.detalhe)
+
+
+def caso_drift_uma_caixa_fora_do_lugar():
+    """UM corpo entre tres esta errado. Tem que reprovar E dizer qual.
+
+    E o caso que o drift de um corpo so nao pegava: com 150 caixas replicando, uma
+    delas no lugar errado nao aparece em metrica nenhuma que olhe so para a viga.
+    """
+    a = montar_multi(obj_torto="12", erro_y=0.40)
+    codigo, res = rodar(a)
+    r = res.get("drift")
+    if r is None:
+        return False, "drift nem foi avaliado"
+    if r.status != "FAIL":
+        return False, "esperava FAIL, veio %s: %s" % (r.status, r.detalhe)
+    if "obj=12" not in r.detalhe:
+        return False, "reprovou sem dizer qual corpo: %s" % r.detalhe
+    return True, "drift: %s" % r.detalhe
+
+
 def caso_late_join_incompleto():
     """O cliente recebeu MENOS corpos do que o host criou.
 
@@ -503,6 +574,8 @@ CASOS = [
     ("drift: series sem nenhum ntick em comum", caso_drift_series_nao_se_cruzam),
     ("drift: corrida nao chegou aos 5 min", caso_drift_corrida_curta),
     ("drift: cliente atrasado mas correto", caso_cliente_atrasado_mas_correto),
+    ("drift: 3 corpos, todos certos", caso_drift_multi_corpos_ok),
+    ("drift: 1 caixa entre 3 fora do lugar", caso_drift_uma_caixa_fora_do_lugar),
     ("relogio travado no meio", caso_relogio_travado),
     ("duracao exatamente no limite", caso_duracao_no_limite),
     ("fps do host abaixo de 60", caso_fps_baixo),

@@ -519,3 +519,43 @@ instrumento** — e é exatamente o tipo de coisa que o spike existe para achar.
 **Sai daqui quando:** o usuário disser qual das saídas vale — ou quando as candidatas A e C
 mostrarem que uma delas fecha 0,15 u com o mesmo teste mínimo, o que tornaria isto um ponto
 contra a B em vez de um furo da métrica.
+
+## 20. Os 150 ms e 3% que o briefing manda simular exigem *development build*
+
+**Estado:** aberto, e obriga a corrida a existir em duas versões.
+
+O briefing exige: *"Sob 150ms RTT e 3% packet loss simulados: objeto carregado não teleporta e
+o personagem responde em menos de 100ms percebidos"*. **Todas as corridas com rede real feitas
+até 18/09 têm RTT injetado ZERO** — e o drift já reprova assim (`docs/99` 19).
+
+O FishNet tem o simulador embutido, e ele é **público**: `TransportManager.LatencySimulator`,
+com `SetEnabled`, `SetLatency`, `SetPacketLoss` (`LatencySimulator.cs:67, 99, 140`). O
+problema é onde ele é chamado. Lido em `TransportManager.cs`, linhas 1-3:
+
+```csharp
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#define DEVELOPMENT
+#endif
+```
+
+e os três pontos que de fato usam o simulador (`AddOutgoing` no caminho do servidor, o mesmo
+no do cliente, e `IterateOutgoing`) estão todos dentro de `#if DEVELOPMENT`. Num build de
+release o simulador existe, aceita configuração, e **nunca é consultado** — pior forma de
+falhar: configurar e não ter efeito, sem erro.
+
+**Isto é diferente do item 17, e a diferença importa.** Lá (banda) a barreira é de
+**visibilidade de assembly** — `internal` ao `FishNet.Runtime` —, e por isso nem development
+build resolve. Aqui é **símbolo de compilação**: um development build resolve.
+
+**O preço, e é ele que cria o problema:** development build não é o mesmo programa. Sem
+stripping, com hooks de profiler, com verificações extras. **O `fps` de um dev build não é
+comparável com o de um build de release**, e fps é outra métrica do briefing. As duas não
+cabem na mesma corrida.
+
+**O encaminhamento, que ainda não foi executado:** duas versões declaradas no `[SOAK-META]` —
+`build_flavor=release` para fps e teleporte, `build_flavor=development` para as métricas sob
+RTT/perda. Nenhum número de uma pode ser citado como se fosse da outra, e o relatório da Fase 1
+precisa dizer de qual veio cada linha.
+
+**Sai daqui quando:** o `SpikePlayerBuilder` souber construir as duas, o `[SOAK-META]` carregar
+qual é, e existir uma corrida sob 150 ms / 3% com número publicado.

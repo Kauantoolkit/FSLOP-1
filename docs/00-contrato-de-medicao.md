@@ -129,14 +129,33 @@ Uma por tick de rede, por instância, **enquanto o corpo observado existir**. É
 do drift e o único par de séries que as duas pontas produzem sobre a mesma coisa.
 
 ```
-[SOAK-POS] ntick=<uint> t=<float> role=<host|client> id=<0..3> x=<float> y=<float> z=<float>
+[SOAK-POS] ntick=<uint> t=<float> role=<host|client> id=<0..3> obj=<int> x=<float> y=<float> z=<float>
 ```
 
 | campo | o que é |
 |---|---|
-| `ntick` | tick **da rede**, não o `tick` local das outras linhas. É a chave do cruzamento. |
+| `ntick` | tick **da rede**, não o `tick` local das outras linhas. Metade da chave do cruzamento. |
 | `t` | segundos desde o início **desta** instância. Serve só para o corte dos 5 min. |
-| `x` `y` `z` | posição do corpo observado, 4 casas (0,1 mm — o limiar do briefing é 0,15 u) |
+| `obj` | id do corpo **em rede**, igual nas duas pontas. A outra metade da chave. |
+| `x` `y` `z` | posição do corpo, 4 casas (0,1 mm — o limiar do briefing é 0,15 u) |
+
+**Por que `obj`, e por que não o nome.** O cliente recebe *clones* do prefab, e nome não é
+sincronizado — `Box_042` no host é `Box(Clone)` no cliente. Posição na lista também não
+serve: a ordem de chegada no cliente não é a de criação no host. O que sobra, e o que a
+biblioteca garante igual nas duas pontas, é o id de objeto em rede.
+
+### Cadência: a viga todo tick, os 151 corpos a cada segundo
+
+O corpo carregado é o que o briefing cita nominalmente, e é o que se move o tempo todo —
+esse sai **a cada tick**. Os demais saem numa varredura a cada **30 ticks de rede**.
+
+A cadência da varredura é contada em **tick de rede**, nunca em segundos, e isso é o ponto:
+assim as duas pontas emitem exatamente nos **mesmos** ticks. Se cada uma amostrasse no
+próprio relógio, as duas séries não teriam par nenhum para cruzar e o drift dos 150 corpos
+simplesmente não existiria como número.
+
+Varrer 151 corpos a cada tick daria ~4500 linhas/s por instância, e o log viraria o gargalo
+da medição — o instrumento passaria a medir a si mesmo.
 
 **O corte dos 5 min usa o `t` do HOST, nunca o do cliente.** O briefing pede drift "após 5
 min de simulação contínua", e para um cliente que entrou atrasado o `t` local dele não diz
@@ -159,8 +178,16 @@ vale 33 ms; com a viga a ~0,5 u/s isso dá ~0,017 u de erro de eixo contra o lim
 
 | número | o que é | por que separado |
 |---|---|---|
-| `drift_mesmo_ntick` | distância entre host e cliente no **mesmo** `ntick` | é o erro de posição que uma pessoa veria na tela: inclui o atraso do buffer de interpolação |
+| `drift_mesmo_ntick` | distância entre host e cliente no **mesmo** `ntick`, por corpo | é o erro de posição que uma pessoa veria na tela: inclui o atraso do buffer de interpolação |
 | `drift_alinhado` + `atraso_ticks` | menor distância ao deslocar a série do cliente em até ±N ticks, e de quanto foi o deslocamento | separa **atraso** de **divergência**. Um cliente 3 ticks atrás mas perfeitamente correto não é a mesma falha que um cliente no tick certo e no lugar errado |
+
+**O deslocamento é o mesmo para todos os corpos.** Atraso é propriedade da conexão, não de
+cada objeto. Procurar um deslocamento por corpo deixaria cada um escolher o que mais o
+favorece, e o número resultante não descreveria nada.
+
+**O pior caso diz qual corpo e quando.** `0,68 u` sozinho não distingue "a viga está atrasada"
+de "uma caixa caiu da pilha só no cliente" — e essas duas coisas se investigam em lugares
+diferentes.
 
 O limiar de 0,15 u do briefing é aplicado ao **`drift_mesmo_ntick`**, porque é ele que
 descreve o que se vê. O `drift_alinhado` não tem limiar: ele é diagnóstico, e existe para

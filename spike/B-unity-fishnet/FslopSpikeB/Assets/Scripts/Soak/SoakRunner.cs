@@ -404,15 +404,60 @@ namespace Fslop.SpikeB
                 return;
             }
 
-            Vector3 p = viga.transform.position;
+            uint ntick = rede.TimeManager.Tick;
 
-            // O `t` entra porque o briefing mede drift "apos 5 min de simulacao
-            // continua", e so o ntick nao diz quantos segundos se passaram — a taxa de
-            // tick nao esta no log. Quem vale e o `t` do HOST: para um cliente que entrou
-            // atrasado, o t local dele nao descreve ha quanto tempo o mundo simula.
+            // A viga, todo tick: e o corpo que se move o tempo todo, e o unico que o
+            // briefing cita nominalmente ("o objeto carregado nao teleporta").
+            EmitirPosicao(ntick, viga.Body);
+
+            // Os outros 150, a cada VarreduraDeCorpos ticks. A cadencia e contada em tick de
+            // REDE e nao em segundos, de proposito: assim as duas pontas emitem exatamente
+            // nos MESMOS ticks. Amostrando cada uma no proprio relogio, as series nao teriam
+            // par nenhum para cruzar e o drift das caixas ficaria sem como ser calculado.
+            if (ntick % VarreduraDeCorpos != 0)
+            {
+                return;
+            }
+
+            foreach (var corpo in sondas)
+            {
+                if (corpo != null && corpo != viga.Body)
+                {
+                    EmitirPosicao(ntick, corpo);
+                }
+            }
+        }
+
+        /// <summary>
+        /// De quantos em quantos ticks de rede os 151 corpos sao varridos. 30, a 30 Hz, e uma
+        /// vez por segundo: ~151 linhas/s por instancia, ~100 mil num soak de 10 min. Varrer
+        /// todos a cada tick daria 4500 linhas/s e o log viraria o gargalo da medicao — o
+        /// instrumento passaria a medir a si mesmo.
+        /// </summary>
+        const uint VarreduraDeCorpos = 30;
+
+        /// <summary>
+        /// Uma linha de posicao. O `t` entra porque o briefing mede drift "apos 5 min de
+        /// simulacao continua" e so o ntick nao diz quantos segundos se passaram; vale o `t`
+        /// do HOST, porque para um cliente que entrou atrasado o relogio local dele nao
+        /// descreve ha quanto tempo o mundo simula.
+        /// </summary>
+        void EmitirPosicao(uint ntick, Rigidbody corpo)
+        {
+            // O ObjectId e o que identifica o MESMO corpo nas duas pontas. Nome nao serve: o
+            // cliente recebe clones do prefab e o FishNet nao sincroniza nome. Posicao na
+            // lista tambem nao: a ordem de chegada no cliente nao e a de criacao no host.
+            var nob = corpo.GetComponent<FishNet.Object.NetworkObject>();
+            if (nob == null)
+            {
+                return;
+            }
+
+            Vector3 p = corpo.transform.position;
+
             Debug.Log(string.Format(CultureInfo.InvariantCulture,
-                "[SOAK-POS] ntick={0} t={1:F3} role={2} id={3} x={4:F4} y={5:F4} z={6:F4}",
-                rede.TimeManager.Tick, Decorrido(), papel, identidade, p.x, p.y, p.z));
+                "[SOAK-POS] ntick={0} t={1:F3} role={2} id={3} obj={4} x={5:F4} y={6:F4} z={7:F4}",
+                ntick, Decorrido(), papel, identidade, nob.ObjectId, p.x, p.y, p.z));
         }
 
         /// <summary>Lado servidor: um par entrou ou saiu.</summary>
