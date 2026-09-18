@@ -61,7 +61,21 @@ namespace Fslop.SpikeB
         /// default de 1 kg daria 70:1, faixa em que o PhysX comeca a tremer em contato
         /// empilhado. 7:1 e razao mansa. Nao e numero de sensacao, e de estabilidade.
         /// </summary>
-        [SerializeField] float boxMassKg = 10f;
+        public const float BoxMassKg = 10f;
+
+        /// <summary>
+        /// Prefab da caixa replicada, montado pelo gerador de cena. Usado SO em play mode:
+        /// o FishNet so spawna pela rede o que tem PrefabId, e PrefabId vem de estar numa
+        /// colecao registrada. Em edit mode as sondas continuam com CreatePrimitive —
+        /// instanciar prefab com NetworkObject fora de play mode acorda o ciclo de vida do
+        /// FishNet sem NetworkManager nenhum para atende-lo.
+        /// </summary>
+        [SerializeField] GameObject networkPrefab;
+
+        public void SetNetworkPrefab(GameObject prefab)
+        {
+            networkPrefab = prefab;
+        }
 
         public int PlannedCount => layers * columnsX * columnsZ;
 
@@ -87,11 +101,17 @@ namespace Fslop.SpikeB
         /// <summary>
         /// Recria a pilha do zero e devolve os corpos. Idempotente de proposito: a sonda
         /// chama isto com a cena ja aberta, e uma segunda chamada nao pode empilhar duas.
+        ///
+        /// Com `rede` nao nula e servidor no ar, cada caixa e spawnada pela rede e os
+        /// clientes recebem — que e o "150 rigidbodies numa pilha instavel" do teste minimo
+        /// existindo nas duas pontas, e nao so na do host. Sem rede, o comportamento e
+        /// exatamente o de antes: e assim que as sondas de edit mode continuam valendo.
         /// </summary>
-        public List<Rigidbody> Spawn()
+        public List<Rigidbody> Spawn(FishNet.Managing.NetworkManager rede = null)
         {
             ClearExisting();
 
+            bool replicar = rede != null && rede.IsServerStarted;
             var bodies = new List<Rigidbody>(PlannedCount);
             float pitch = boxSize + gap;
             int index = 0;
@@ -108,7 +128,17 @@ namespace Fslop.SpikeB
                         float x = (ix - (columnsX - 1) * 0.5f) * pitch;
                         float z = (iz - (columnsZ - 1) * 0.5f) * pitch + leanZ;
 
-                        bodies.Add(CreateBox(index++, new Vector3(x, y, z)));
+                        var corpo = CreateBox(index++, new Vector3(x, y, z));
+                        bodies.Add(corpo);
+
+                        if (replicar)
+                        {
+                            // Spawn DEPOIS de posicionar: o FishNet manda a pose atual no
+                            // pacote de spawn, e spawnar antes faria as 150 caixas nascerem
+                            // na origem no cliente e so depois se arrastarem para o lugar.
+                            rede.ServerManager.Spawn(
+                                corpo.GetComponent<FishNet.Object.NetworkObject>());
+                        }
                     }
                 }
             }
@@ -118,37 +148,80 @@ namespace Fslop.SpikeB
 
         Rigidbody CreateBox(int index, Vector3 localPosition)
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            go.name = string.Format("Box_{0:D3}", index);
-            go.transform.SetParent(transform, false);
-            go.transform.localPosition = localPosition;
-            go.transform.localScale = Vector3.one * boxSize;
+            bool porPrefab = Application.isPlaying && networkPrefab != null;
 
-            var body = go.AddComponent<Rigidbody>();
-            body.mass = boxMassKg;
+            var go = porPrefab
+                ? Instantiate(networkPrefab)
+                : GameObject.CreatePrimitive(PrimitiveType.Cube);
+
+            go.name = string.Format("Box_{0:D3}", index);
+
+            // O objeto replicado NAO e filho deste transform. Objeto spawnado pelo FishNet
+            // nasce na raiz da cena no cliente, e manter hierarquias diferentes nas duas
+            // pontas faria a posicao LOCAL divergir da global sem nada acusar. Fora de rede
+            // o pai continua, que e como as sondas de edit mode sempre mediram.
+            if (porPrefab)
+            {
+                go.transform.position = transform.TransformPoint(localPosition);
+                replicadas.Add(go);
+            }
+            else
+            {
+                go.transform.SetParent(transform, false);
+                go.transform.localPosition = localPosition;
+            }
+
+            go.transform.localScale = Vector3.one * boxSize;
 
             // Interpolate fica DESLIGADO aqui, ao contrario da capsula: sao 150 corpos e
             // interpolacao custa por corpo por quadro. Nada foi otimizado — e que ligar
             // custo em 150 corpos sem ter medido seria a decisao arbitraria, nao o
             // contrario. Entra na conta da change 09 se o fps pedir.
+            var body = go.GetComponent<Rigidbody>();
+            if (body == null)
+            {
+                body = go.AddComponent<Rigidbody>();
+            }
+
+            body.mass = BoxMassKg;
 
             return body;
         }
+
+        /// <summary>
+        /// Caixas replicadas NAO sao filhas deste transform (ver CreateBox), entao a
+        /// limpeza por hierarquia nao alcanca elas. Esta lista e o que torna Spawn
+        /// idempotente tambem no caminho de rede.
+        /// </summary>
+        readonly List<GameObject> replicadas = new List<GameObject>();
 
         void ClearExisting()
         {
             for (int i = transform.childCount - 1; i >= 0; i--)
             {
-                var filho = transform.GetChild(i).gameObject;
+                Remover(transform.GetChild(i).gameObject);
+            }
 
-                if (Application.isPlaying)
+            foreach (var go in replicadas)
+            {
+                if (go != null)
                 {
-                    Destroy(filho);
+                    Remover(go);
                 }
-                else
-                {
-                    DestroyImmediate(filho);
-                }
+            }
+
+            replicadas.Clear();
+        }
+
+        void Remover(GameObject go)
+        {
+            if (Application.isPlaying)
+            {
+                Destroy(go);
+            }
+            else
+            {
+                DestroyImmediate(go);
             }
         }
     }

@@ -81,6 +81,7 @@ namespace Fslop.SpikeB
         int excecoes;
         bool encerrando;
         float inicioDoLateJoin;
+        bool mundoCompleto;
 
         void Awake()
         {
@@ -135,11 +136,15 @@ namespace Fslop.SpikeB
                 return;
             }
 
+            // A pilha NAO nasce aqui. `rede.IsServerStarted` ainda e false neste ponto: o
+            // ServerManager.StartConnection de LigarRede() abre o socket numa thread e o
+            // estado so vira Started no tick seguinte. Criar as caixas agora as faz nascer
+            // fora da rede — 151 corpos no host, 1 no cliente, e NENHUM erro no log, porque
+            // instanciar um prefab de rede sem spawnar e legitimo.
+            //
+            // E a mesma forma da changes/12: o que depende do servidor no ar tem que esperar
+            // o servidor no ar. Nasce em ResolverMundoLocal, chamado do Update.
             pilha = FindAnyObjectByType<BoxStackSpawner>();
-            if (pilha != null)
-            {
-                sondas.AddRange(pilha.Spawn());
-            }
 
             // A viga NAO e procurada aqui, nem no host. Desde que ela virou objeto de cena
             // em rede valido (changes/12), o proprio FishNet a DESATIVA no Start dela —
@@ -202,12 +207,21 @@ namespace Fslop.SpikeB
         /// ela aparece, e e so ai que o mundo do host esta completo — por isso o spawn_done
         /// sai daqui, e nao do Start.
         /// </summary>
-        bool ResolverVigaLocal()
+        bool ResolverMundoLocal()
         {
             var achada = FindAnyObjectByType<CarryBeam>();
             if (achada == null)
             {
                 return false;
+            }
+
+            // A viga so aparece quando o FishNet registra objeto de cena, o que acontece
+            // depois de o servidor subir. Ou seja: chegar aqui JA E a prova de que
+            // IsServerStarted e true, e e por isso que a pilha nasce neste ponto — as 150
+            // caixas precisam de servidor no ar para serem spawnadas pela rede.
+            if (pilha != null)
+            {
+                sondas.AddRange(pilha.Spawn(rede));
             }
 
             viga = achada;
@@ -218,6 +232,64 @@ namespace Fslop.SpikeB
             MontarPortadores();
 
             Evento("spawn_done", "bodies=" + sondas.Count);
+
+            return true;
+        }
+
+        /// <summary>
+        /// Quantos corpos o mundo tem, segundo o TESTE MINIMO — 150 caixas + a viga.
+        ///
+        /// O cliente sabe esse numero sem perguntar ao host porque ele carrega a mesma cena,
+        /// com o mesmo BoxStackSpawner: o numero e do briefing, nao do host. E por isso que
+        /// "estado completo" pode ser conferido no cliente em vez de depender de um campo
+        /// que o host mandaria (e que, se mandasse, nao provaria nada — seria o host se
+        /// auditando).
+        /// </summary>
+        int CorposEsperados()
+        {
+            var spawner = FindAnyObjectByType<BoxStackSpawner>();
+            return (spawner == null ? 0 : spawner.PlannedCount) + 1;
+        }
+
+        /// <summary>
+        /// Recolhe os corpos replicados que ja chegaram. Devolve true quando o mundo do
+        /// cliente esta COMPLETO — e so ai o late join acabou.
+        ///
+        /// Antes da change 18 isto procurava so a viga e declarava late join feito no quadro
+        /// em que ela aparecia. Com 150 caixas chegando depois, aquele instante deixou de
+        /// ser "recebi o estado" e virou "recebi o primeiro objeto".
+        /// </summary>
+        bool ResolverMundoReplicado()
+        {
+            int esperados = CorposEsperados();
+
+            // Recolhe tudo que ja existe. FindObjectsByType ignora inativos, e e exatamente
+            // o que se quer: objeto de rede so fica ativo depois do spawn.
+            sondas.Clear();
+            foreach (var corpo in FindObjectsByType<Rigidbody>())
+            {
+                var nob = corpo.GetComponent<FishNet.Object.NetworkObject>();
+                if (nob != null && nob.IsSpawned)
+                {
+                    corpo.isKinematic = true;
+                    sondas.Add(corpo);
+                }
+            }
+
+            if (viga == null)
+            {
+                ResolverVigaReplicada();
+            }
+
+            if (sondas.Count < esperados)
+            {
+                return false;
+            }
+
+            Evento("late_join_done", string.Format(CultureInfo.InvariantCulture,
+                "elapsed_ms={0:F1} ntick={1} world_hash={2} bodies={3} esperados={4}",
+                (Decorrido() - inicioDoLateJoin) * 1000f, TickDaRede(), HashDoMundo(),
+                sondas.Count, esperados));
 
             return true;
         }
@@ -244,18 +316,10 @@ namespace Fslop.SpikeB
             // tem que fazer e a configuracao, no momento certo do ciclo de vida.
             viga.Body.isKinematic = true;
 
-            // A viga entra nas sondas do cliente: e o unico corpo replicado, entao e sobre
-            // ela que world_hash e carry_jump_u do cliente falam. O hash do cliente NAO vai
-            // bater com o do host enquanto as 150 caixas nao forem replicadas — o host
-            // descreve 151 corpos e o cliente 1. O avaliador vai reprovar late_join por
-            // causa disso, e vai estar CERTO: o estado do cliente nao esta completo.
-            sondas.Add(viga.Body);
-
-            Evento("late_join_done", string.Format(CultureInfo.InvariantCulture,
-                "elapsed_ms={0:F1} ntick={1} world_hash={2} bodies={3}",
-                (Decorrido() - inicioDoLateJoin) * 1000f, TickDaRede(), HashDoMundo(),
-                sondas.Count));
-
+            // A viga NAO entra em `sondas` aqui: quem monta a lista e ResolverMundoReplicado,
+            // que recolhe todos os corpos spawnados de uma vez. Adicionar aqui duplicaria
+            // ela, e um corpo contado duas vezes faria `bodies` bater 151 com 150 corpos
+            // reais — falso verde exatamente na metrica que este caminho serve.
             return true;
         }
 
@@ -478,19 +542,19 @@ namespace Fslop.SpikeB
 
         void Update()
         {
-            // A viga esta desativada na cena ate o FishNet registra-la, nos DOIS papeis: no
-            // cliente ate o spawn vindo do servidor, no host ate o servidor subir. Por isso
-            // a busca fica aqui, e nao no Start.
-            if (viga == null)
+            // Os corpos de rede so existem depois que o FishNet os registra, nos DOIS papeis:
+            // no cliente ate o spawn vindo do servidor, no host ate o servidor subir. Por
+            // isso a busca fica aqui, e nao no Start.
+            if (SouServidor)
             {
-                if (SouServidor)
+                if (viga == null)
                 {
-                    ResolverVigaLocal();
+                    ResolverMundoLocal();
                 }
-                else
-                {
-                    ResolverVigaReplicada();
-                }
+            }
+            else if (!mundoCompleto)
+            {
+                mundoCompleto = ResolverMundoReplicado();
             }
 
             float dtMs = Time.unscaledDeltaTime * 1000f;
@@ -673,6 +737,17 @@ namespace Fslop.SpikeB
             if (SouServidor)
             {
                 Evento("host_quit", "motivo=" + motivo);
+            }
+            else if (!mundoCompleto)
+            {
+                // A corrida acabou e o mundo do cliente nunca completou. Isto NAO e emitido
+                // como late_join_done: "done" tem que significar done. Sem este evento o
+                // avaliador so poderia dizer "nenhum ev=late_join_done", que e verdade e nao
+                // informa nada — e a diferenca entre "chegaram 149 de 151" e "nao chegou
+                // nada" muda completamente onde procurar.
+                Evento("late_join_timeout", string.Format(CultureInfo.InvariantCulture,
+                    "esperou_ms={0:F1} bodies={1} esperados={2}",
+                    (Decorrido() - inicioDoLateJoin) * 1000f, sondas.Count, CorposEsperados()));
             }
 
             Evento("shutdown", string.Format(CultureInfo.InvariantCulture,

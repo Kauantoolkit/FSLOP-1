@@ -605,7 +605,20 @@ def checar_late_join(corrida):
     atraso de divergencia.
     """
     feitos = [e for e in corrida.eventos if e.get("ev") == "late_join_done"]
+    se_perdeu = [e for e in corrida.eventos if e.get("ev") == "late_join_timeout"]
     if not feitos:
+        if se_perdeu:
+            # Muito melhor que "nenhum evento": "chegaram 149 de 151" e "nao chegou
+            # nada" mandam procurar em lugares diferentes.
+            return Resultado(
+                "late_join", "FAIL",
+                "; ".join(
+                    "id=%s desistiu apos %.1f ms com %s de %s corpo(s)"
+                    % (e.get("id"), num(e, "esperou_ms", -1.0),
+                       e.get("bodies", "?"), e.get("esperados", "?"))
+                    for e in se_perdeu
+                )
+            )
         return Resultado("late_join", "FAIL", "nenhum evento ev=late_join_done")
 
     criados = [

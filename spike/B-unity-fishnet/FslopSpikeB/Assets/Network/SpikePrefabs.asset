@@ -12,4 +12,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4489d77032a81ef42b0067acf2737d4d, type: 3}
   m_Name: SpikePrefabs
   m_EditorClassIdentifier: FishNet.Runtime::FishNet.Managing.Object.SinglePrefabObjects
-  _prefabs: []
+  _prefabs:
+  - {fileID: 6043763434650236886, guid: fd5aea2f492ad964793563e2bf772921, type: 3}

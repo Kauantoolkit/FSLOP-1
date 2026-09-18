@@ -25,6 +25,7 @@ namespace Fslop.SpikeB.EditorTools
         public const string PhysicsFolder = "Assets/Physics";
         public const string NetworkFolder = "Assets/Network";
         public const string PrefabCollectionPath = NetworkFolder + "/SpikePrefabs.asset";
+        public const string BoxPrefabPath = NetworkFolder + "/Box.prefab";
         public const string PlayerMaterialPath = PhysicsFolder + "/PlayerFrictionless.asset";
 
         public const string GroundName = "Ground";
@@ -58,9 +59,9 @@ namespace Fslop.SpikeB.EditorTools
             CreateSun();
             CreatePlayer(playerMaterial);
             CreateCamera();
-            CreateBoxStack();
+            var prefabDaCaixa = CreateBoxStack();
             CreateBeam();
-            CreateNetwork();
+            CreateNetwork(prefabDaCaixa);
             CreateSoakRunner();
 
             if (!AssetDatabase.IsValidFolder(SceneFolder))
@@ -270,11 +271,64 @@ namespace Fslop.SpikeB.EditorTools
         /// Longe do spawn do jogador de proposito: a capsula cai de y=5 e nao pode
         /// derrubar a pilha antes de a medicao comecar.
         /// </summary>
-        static void CreateBoxStack()
+        static GameObject CreateBoxStack()
         {
             var go = new GameObject(BoxStackName);
             go.transform.position = new Vector3(10f, 0f, 0f);
-            go.AddComponent<BoxStackSpawner>();
+
+            var prefab = CreateBoxPrefab();
+
+            var spawner = go.AddComponent<BoxStackSpawner>();
+            spawner.SetNetworkPrefab(prefab);
+
+            return prefab;
+        }
+
+        /// <summary>
+        /// O prefab da caixa replicada. Precisa ser PREFAB, e nao objeto montado em runtime:
+        /// o FishNet so spawna pela rede o que tem PrefabId, e PrefabId vem de estar numa
+        /// colecao registrada (SpawnablePrefabs). Um NetworkObject adicionado por
+        /// AddComponent em runtime nasce sem id e o cliente nao teria o que instanciar.
+        ///
+        /// Ele e usado SO em play mode (ver BoxStackSpawner.CreateBox): as sondas de edit
+        /// mode continuam com CreatePrimitive, porque instanciar prefab com NetworkObject
+        /// fora de play mode acorda o ciclo de vida do FishNet sem NetworkManager nenhum.
+        /// </summary>
+        static GameObject CreateBoxPrefab()
+        {
+            var molde = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            molde.name = "Box";
+
+            var body = molde.AddComponent<Rigidbody>();
+            body.mass = BoxStackSpawner.BoxMassKg;
+
+            // Interpolate DESLIGADO, igual ao que CreateBox ja fazia: sao 150 corpos, e
+            // interpolacao custa por corpo por quadro. Ligar sem medir seria a decisao
+            // arbitraria (o briefing proibe otimizar antes de medir — e tambem proibe o
+            // contrario, mudar o que ja estava medido sem motivo).
+
+            molde.AddComponent<FishNet.Object.NetworkObject>();
+
+            var sync = molde.AddComponent<FishNet.Component.Transforming.NetworkTransform>();
+            sync.SetSynchronizeScale(false);   // caixa nao muda de escala
+            ConfigurarSincroniaDeRigidbody(sync);   // errors/07 — o par kinematic+interpolacao
+
+            if (!AssetDatabase.IsValidFolder(NetworkFolder))
+            {
+                AssetDatabase.CreateFolder("Assets", "Network");
+            }
+
+            AssetDatabase.DeleteAsset(BoxPrefabPath);
+            var prefab = PrefabUtility.SaveAsPrefabAsset(molde, BoxPrefabPath);
+            Object.DestroyImmediate(molde);
+
+            if (prefab == null)
+            {
+                throw new System.Exception("[BUILDER] SaveAsPrefabAsset falhou para " + BoxPrefabPath);
+            }
+
+            Log("prefab da caixa em " + BoxPrefabPath);
+            return prefab;
         }
 
         /// <summary>
@@ -362,7 +416,7 @@ namespace Fslop.SpikeB.EditorTools
                     campo, relido.enumValueIndex, (int)alvo, alvo));
             }
 
-            Log("NetworkTransform da viga: " + campo + "=" + alvo);
+            Log("NetworkTransform de '" + sync.gameObject.name + "': " + campo + "=" + alvo);
         }
 
         /// <summary>
@@ -375,7 +429,7 @@ namespace Fslop.SpikeB.EditorTools
         /// Tugboat e transporte UDP local. E o que decisions/01 previu para o soak
         /// automatizado; o relay da Steam continua sendo prova manual de 2 maquinas.
         /// </summary>
-        static void CreateNetwork()
+        static void CreateNetwork(GameObject prefabDaCaixa)
         {
             var go = new GameObject(NetworkName);
             var manager = go.AddComponent<FishNet.Managing.NetworkManager>();
@@ -383,12 +437,23 @@ namespace Fslop.SpikeB.EditorTools
             // SpawnablePrefabs nao pode ficar nulo: NetworkManager.ValidateSpawnablePrefabs
             // aborta a inicializacao. No Editor ele se vira sozinho buscando o
             // DefaultPrefabObjects, mas isso nao acontece num player — e o player e onde o
-            // soak roda. A colecao entra vazia de propósito: a viga e objeto de CENA, nao
-            // prefab, e nada e spawnado por instanciacao ainda.
-            manager.SpawnablePrefabs = CreatePrefabCollection();
+            // soak roda.
+            manager.SpawnablePrefabs = CreatePrefabCollection(prefabDaCaixa);
         }
 
-        static FishNet.Managing.Object.PrefabObjects CreatePrefabCollection()
+        /// <summary>
+        /// A colecao de prefabs spawnaveis. A viga NAO entra: ela e objeto de CENA, casada
+        /// entre instancias por id de cena (changes/12), nao instanciada. Quem entra e a
+        /// caixa, que o host cria 150 vezes em runtime.
+        ///
+        /// O PrefabId nao e gravado aqui: SinglePrefabObjects.cs:71 so inicializa quando
+        /// `Application.isPlaying`, e isto roda em batchmode de editor. Quem atribui e o
+        /// NetworkManager ao subir (NetworkManager.cs:315, `InitializePrefabRange(0)`), nos
+        /// DOIS processos — e por isso os ids batem: mesma colecao, mesma ordem, mesmo
+        /// indice. Se a ordem desta lista mudar entre host e cliente, o cliente instancia o
+        /// prefab errado sem nenhum erro.
+        /// </summary>
+        static FishNet.Managing.Object.PrefabObjects CreatePrefabCollection(GameObject prefabDaCaixa)
         {
             if (!AssetDatabase.IsValidFolder(NetworkFolder))
             {
@@ -399,10 +464,24 @@ namespace Fslop.SpikeB.EditorTools
 
             AssetDatabase.DeleteAsset(PrefabCollectionPath);
             AssetDatabase.CreateAsset(colecao, PrefabCollectionPath);
+
+            var salva = AssetDatabase.LoadAssetAtPath<FishNet.Managing.Object.SinglePrefabObjects>(
+                PrefabCollectionPath);
+
+            var nob = prefabDaCaixa.GetComponent<FishNet.Object.NetworkObject>();
+            if (nob == null)
+            {
+                throw new System.Exception(
+                    "[BUILDER] o prefab da caixa nao tem NetworkObject - sem ele o FishNet " +
+                    "nao consegue spawnar, e as 150 caixas ficariam so no host.");
+            }
+
+            salva.AddObject(nob, checkForDuplicates: true, initializeAdded: false);
+            EditorUtility.SetDirty(salva);
             AssetDatabase.SaveAssets();
 
-            return AssetDatabase.LoadAssetAtPath<FishNet.Managing.Object.SinglePrefabObjects>(
-                PrefabCollectionPath);
+            Log("colecao de prefabs: 1 objeto (" + BoxPrefabPath + ")");
+            return salva;
         }
 
         /// <summary>
