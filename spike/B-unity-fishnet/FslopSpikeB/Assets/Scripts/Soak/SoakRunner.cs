@@ -50,6 +50,17 @@ namespace Fslop.SpikeB
         /// </summary>
         long rttMs;
         double lossPct;
+
+        /// <summary>
+        /// Ticks de interpolacao do NetworkTransform. 0 = nao mexe, fica o default da cena.
+        ///
+        /// E o botao que o docs/99 item 21 identificou e nao tinha medido. Ele nao controla
+        /// so a suavidade: o descarte que FAZ a viga teleportar dispara quando a fila passa
+        /// de `_interpolation + 3` (NetworkTransform.cs:2425), entao interpolacao maior
+        /// tolera rajada maior — ao custo de mais atraso, que e a moeda que o item 19 ja nao
+        /// tem. Medir os dois lados do mesmo dial e o ponto.
+        /// </summary>
+        int interpolacao;
         float duracaoAlvo = 30f;
 
         /// <summary>
@@ -294,12 +305,44 @@ namespace Fslop.SpikeB
                 return false;
             }
 
+            int ajustados = AplicarInterpolacao();
+
             Evento("late_join_done", string.Format(CultureInfo.InvariantCulture,
-                "elapsed_ms={0:F1} ntick={1} world_hash={2} bodies={3} esperados={4}",
+                "elapsed_ms={0:F1} ntick={1} world_hash={2} bodies={3} esperados={4} " +
+                "interp={5} interp_aplicada_em={6}",
                 (Decorrido() - inicioDoLateJoin) * 1000f, TickDaRede(), HashDoMundo(),
-                sondas.Count, esperados));
+                sondas.Count, esperados, interpolacao, ajustados));
 
             return true;
+        }
+
+        /// <summary>
+        /// Aplica `-soakInterp` a todos os NetworkTransform que ja existem. Devolve quantos.
+        ///
+        /// Roda DEPOIS de o mundo estar completo, e nao no Start, porque as 150 caixas sao
+        /// spawnadas e so existem la. Devolver a contagem importa: uma corrida que pedisse
+        /// interpolacao 6 e ajustasse 1 corpo em vez de 151 daria um numero sobre outra coisa,
+        /// e sem esse campo ninguem saberia.
+        ///
+        /// Zero significa "nao mexe": o default da cena e um valor medido, e sobrescrever por
+        /// acidente trocaria a linha de base de todas as corridas anteriores.
+        /// </summary>
+        int AplicarInterpolacao()
+        {
+            if (interpolacao <= 0)
+            {
+                return 0;
+            }
+
+            int ajustados = 0;
+            foreach (var sync in
+                     FindObjectsByType<FishNet.Component.Transforming.NetworkTransform>())
+            {
+                sync.SetInterpolation((ushort)interpolacao);
+                ajustados++;
+            }
+
+            return ajustados;
         }
 
         /// <summary>
@@ -947,6 +990,12 @@ namespace Fslop.SpikeB
                         double.TryParse(args[i + 1], NumberStyles.Float,
                             CultureInfo.InvariantCulture, out lossPct);
                         lossPct = System.Math.Max(lossPct, 0d);
+                        break;
+
+                    case "-soakInterp":
+                        int.TryParse(args[i + 1], NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out interpolacao);
+                        interpolacao = Mathf.Max(interpolacao, 0);
                         break;
                 }
             }

@@ -228,7 +228,8 @@ Aperiódica. É o que o PASS/FAIL de late join e de queda do host lê.
 | `peer_disconnected` | o simétrico do acima | `conn=<id\|eu>` |
 | `spawn_done` | os 150 corpos existem | `bodies=<int>` |
 | `late_join_begin` | instância entra depois do início | `at_t=<float>` |
-| `late_join_done` | estado recebido por inteiro | `elapsed_ms=<float> ntick=<int> world_hash=<hex8> bodies=<int>` |
+| `late_join_done` | estado recebido por inteiro | `elapsed_ms=<float> ntick=<int> world_hash=<hex8> bodies=<int> esperados=<int> interp=<int> interp_aplicada_em=<int>` |
+| `late_join_timeout` | a corrida acabou e o estado nunca completou | `esperou_ms=<float> bodies=<int> esperados=<int>` |
 | `grab` / `release` | agarre da viga | `by=<id> holders=<int>` |
 | `host_quit` | host encerrou de propósito | — |
 | `shutdown` | instância encerrou | `clean=<0\|1> reason=<str>` |
