@@ -23,6 +23,14 @@ import sys
 TAG_META = "[SOAK-META]"
 TAG_SAMPLE = "[SOAK]"
 TAG_EVENT = "[SOAK-EV]"
+TAG_POS = "[SOAK-POS]"
+
+# Ate quantos ticks de rede deslocar a serie do cliente ao procurar o alinhamento
+# que separa ATRASO de DIVERGENCIA. 30 ticks a 30 Hz = 1 s, muito alem de qualquer
+# buffer de interpolacao razoavel: se o melhor alinhamento encostar neste teto, o
+# numero nao e "atraso", e outra coisa — e o avaliador diz isso em vez de reportar
+# um minimo que so existe porque a busca acabou.
+BUSCA_ATRASO_TICKS = 30
 
 # Limiares. Todos vem de docs/00-contrato-de-medicao.md, que por sua vez os
 # tira do briefing. O unico que NAO esta no briefing e o de teleporte da viga
@@ -86,6 +94,7 @@ class Corrida:
         self.metas = []
         self.amostras = []
         self.eventos = []
+        self.posicoes = []
         self.arquivos = []
         self.linhas_lidas = 0
         self.linhas_ignoradas = 0
@@ -108,6 +117,8 @@ def carregar(diretorio):
                 corrida.linhas_lidas += 1
                 if linha.startswith(TAG_META + " "):
                     corrida.metas.append(pares(linha[len(TAG_META):]))
+                elif linha.startswith(TAG_POS + " "):
+                    corrida.posicoes.append(pares(linha[len(TAG_POS):]))
                 elif linha.startswith(TAG_EVENT + " "):
                     corrida.eventos.append(pares(linha[len(TAG_EVENT):]))
                 elif linha.startswith(TAG_SAMPLE + " "):
@@ -150,11 +161,15 @@ def checar_integridade(corrida, instancias_esperadas):
 
     if problemas:
         return Resultado("integridade", "FAIL", "; ".join(problemas))
-    detalhe = "%d arquivos, %d amostras, %d eventos, %d linha(s) fora do contrato" % (
-        len(corrida.arquivos),
-        len(corrida.amostras),
-        len(corrida.eventos),
-        corrida.linhas_ignoradas,
+    detalhe = (
+        "%d arquivos, %d amostras, %d eventos, %d posicoes, %d linha(s) fora do contrato"
+        % (
+            len(corrida.arquivos),
+            len(corrida.amostras),
+            len(corrida.eventos),
+            len(corrida.posicoes),
+            corrida.linhas_ignoradas,
+        )
     )
     return Resultado("integridade", "PASS", detalhe)
 
@@ -397,33 +412,170 @@ def checar_input(corrida):
     )
 
 
+def serie_de_posicao(corrida, papel, identidade=None):
+    """Posicoes de uma instancia, indexadas pelo tick DA REDE.
+
+    Devolve {ntick: (x, y, z)}. Linha com campo faltando ou ilegivel e descartada
+    em silencio de proposito: o contrato ja obriga o emissor, e uma linha torta nao
+    pode derrubar a avaliacao inteira. Quem acusa emissor quebrado e
+    checar_integridade, contando linhas.
+    """
+    serie = {}
+    for p in corrida.posicoes:
+        if p.get("role") != papel:
+            continue
+        if identidade is not None and p.get("id") != identidade:
+            continue
+        ntick = num(p, "ntick")
+        x, y, z = num(p, "x"), num(p, "y"), num(p, "z")
+        if None in (ntick, x, y, z):
+            continue
+        serie[int(ntick)] = (x, y, z)
+    return serie
+
+
+def tempo_do_host_por_ntick(corrida):
+    """{ntick: t do host}. E o unico relogio que diz ha quanto tempo o MUNDO simula.
+
+    O `t` do cliente nao serve para o corte dos 5 min do briefing: um cliente que
+    entrou atrasado esta aos 60 s do proprio relogio olhando um mundo de 6 min.
+    """
+    tempos = {}
+    for p in corrida.posicoes:
+        if p.get("role") != "host":
+            continue
+        ntick, t = num(p, "ntick"), num(p, "t")
+        if ntick is None or t is None:
+            continue
+        tempos[int(ntick)] = t
+    return tempos
+
+
+def distancia(a, b):
+    return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2)
+
+
+def maior_distancia_com_deslocamento(host, cliente, deslocamento):
+    """Pior distancia host x cliente quando a serie do cliente e deslocada N ticks.
+
+    Devolve (pior, quantos_pares). `deslocamento` positivo significa que o cliente
+    esta ATRASADO: o que ele mostra no tick T e comparado com o que o host tinha em
+    T - deslocamento.
+    """
+    pior = None
+    pares_usados = 0
+    for ntick, pos_cliente in cliente.items():
+        pos_host = host.get(ntick - deslocamento)
+        if pos_host is None:
+            continue
+        d = distancia(pos_host, pos_cliente)
+        pares_usados += 1
+        if pior is None or d > pior:
+            pior = d
+    return pior, pares_usados
+
+
 def checar_drift(corrida):
-    apos = LIMIARES["drift_apos_s"]
+    """Drift e comparacao ENTRE instancias, e por isso nao sai da linha de amostra.
+
+    Ver docs/00, secao "Drift nao cabe na linha de amostra": no instante em que o
+    cliente emite, ele nao conhece a posicao autoritativa do host. Quem cruza e este
+    avaliador, que tem os dois logs, pela serie [SOAK-POS] indexada no tick da rede.
+
+    Dois numeros, nao um:
+      - `drift_mesmo_ntick` e o erro que uma pessoa veria na tela. Inclui o atraso do
+        buffer de interpolacao. E nele que o limiar de 0.15 u do briefing e aplicado;
+      - `drift_alinhado` + `atraso_ticks` separam atraso de divergencia. Um cliente 3
+        ticks atras mas correto nao e a mesma falha que um cliente no tick certo e no
+        lugar errado, e um FAIL sem essa separacao nao da para explicar.
+    """
     limite = LIMIARES["drift_u_max"]
-    elegiveis = [
-        a for a in corrida.amostras
-        if a.get("role") == "client"
-        and num(a, "t") is not None and num(a, "t") >= apos
-        # Mesma armadilha de checar_input: -1 e "nao instrumentado", e sem este
-        # filtro um drift nao medido passaria como o melhor drift possivel.
-        and num(a, "drift_max_u") is not None and num(a, "drift_max_u") >= 0
-    ]
-    if not elegiveis:
+    apos = LIMIARES["drift_apos_s"]
+
+    host_completo = serie_de_posicao(corrida, "host")
+    tempos = tempo_do_host_por_ntick(corrida)
+
+    # O corte do briefing: "drift ... apos 5 min de simulacao continua". Vale o
+    # relogio do HOST, e nenhum tick sem tempo conhecido entra — sem o t nao da para
+    # afirmar que ele esta depois do corte, e afirmar seria inventar cobertura.
+    host = {
+        ntick: pos for ntick, pos in host_completo.items()
+        if tempos.get(ntick) is not None and tempos[ntick] >= apos
+    }
+
+    if host_completo and not host:
         return Resultado(
             "drift", "FAIL",
-            "nenhuma amostra de cliente com t>=%.0fs e drift_max_u medido (ausente, "
-            "ou -1 = nao instrumentado) - a corrida nao chegou aos 5 min ou o campo "
-            "nao foi emitido" % apos
+            "a corrida nao chegou aos %.0f s que o briefing exige: o host tem %d tick(s) "
+            "de posicao, nenhum depois do corte. Drift so significa algo depois de o "
+            "mundo simular continuamente." % (apos, len(host_completo))
         )
-    ruins = [a for a in elegiveis if num(a, "drift_max_u") >= limite]
-    pior = max(elegiveis, key=lambda a: num(a, "drift_max_u"))
-    p99 = percentil([num(a, "drift_max_u") for a in elegiveis], 0.99)
-    status = "PASS" if not ruins else "FAIL"
+
+    if not host:
+        return Resultado(
+            "drift", "FAIL",
+            "nenhuma linha %s de role=host - sem a serie do host nao existe verdade "
+            "contra a qual comparar" % TAG_POS
+        )
+
+    clientes = sorted({
+        p.get("id") for p in corrida.posicoes if p.get("role") == "client"
+    })
+    if not clientes:
+        return Resultado(
+            "drift", "FAIL",
+            "nenhuma linha %s de role=client - a corrida nao teve cliente, ou o "
+            "emissor nao instrumentou posicao" % TAG_POS
+        )
+
+    piores = []
+    for identidade in clientes:
+        cliente = serie_de_posicao(corrida, "client", identidade)
+        mesmo, pares_usados = maior_distancia_com_deslocamento(host, cliente, 0)
+        if mesmo is None:
+            piores.append((identidade, None, None, None, 0))
+            continue
+
+        melhor = None
+        melhor_deslocamento = 0
+        for deslocamento in range(0, BUSCA_ATRASO_TICKS + 1):
+            valor, usados = maior_distancia_com_deslocamento(host, cliente, deslocamento)
+            if valor is None or usados == 0:
+                continue
+            if melhor is None or valor < melhor:
+                melhor = valor
+                melhor_deslocamento = deslocamento
+
+        piores.append((identidade, mesmo, melhor, melhor_deslocamento, pares_usados))
+
+    sem_par = [p for p in piores if p[1] is None]
+    if sem_par:
+        return Resultado(
+            "drift", "FAIL",
+            "cliente(s) %s sem nenhum ntick em comum com o host - as series existem "
+            "mas nao se sobrepoem, entao nada foi comparado"
+            % ", ".join(str(p[0]) for p in sem_par)
+        )
+
+    acima = [p for p in piores if p[1] >= limite]
+    pior = max(piores, key=lambda p: p[1])
+    identidade, mesmo, alinhado, deslocamento, pares_usados = pior
+
+    aviso = ""
+    if deslocamento >= BUSCA_ATRASO_TICKS:
+        aviso = (" | ATENCAO: o alinhamento encostou no teto de busca (%d ticks), "
+                 "entao esse 'atraso' nao e atraso - a serie do cliente nao casa com "
+                 "a do host em nenhum deslocamento procurado"
+                 % BUSCA_ATRASO_TICKS)
+
+    status = "PASS" if not acima else "FAIL"
     return Resultado(
         "drift", status,
-        "pior %.4f u, p99 %.4f u (limite %.2f) em t=%s id=%s | %d de %d amostra(s) acima"
-        % (num(pior, "drift_max_u"), p99, limite, pior.get("t"), pior.get("id"),
-           len(ruins), len(elegiveis))
+        "pior id=%s: drift_mesmo_ntick %.4f u (limite %.2f) | alinhado %.4f u com "
+        "atraso de %d tick(s) | %d par(es) de ntick comparados, %d cliente(s) acima "
+        "do limite%s"
+        % (identidade, mesmo, limite, alinhado, deslocamento, pares_usados,
+           len(acima), aviso)
     )
 
 

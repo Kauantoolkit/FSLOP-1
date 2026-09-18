@@ -127,13 +127,19 @@ Uma por tick de rede, por instância, **enquanto o corpo observado existir**. É
 do drift e o único par de séries que as duas pontas produzem sobre a mesma coisa.
 
 ```
-[SOAK-POS] ntick=<uint> role=<host|client> id=<0..3> x=<float> y=<float> z=<float>
+[SOAK-POS] ntick=<uint> t=<float> role=<host|client> id=<0..3> x=<float> y=<float> z=<float>
 ```
 
 | campo | o que é |
 |---|---|
 | `ntick` | tick **da rede**, não o `tick` local das outras linhas. É a chave do cruzamento. |
+| `t` | segundos desde o início **desta** instância. Serve só para o corte dos 5 min. |
 | `x` `y` `z` | posição do corpo observado, 4 casas (0,1 mm — o limiar do briefing é 0,15 u) |
+
+**O corte dos 5 min usa o `t` do HOST, nunca o do cliente.** O briefing pede drift "após 5
+min de simulação contínua", e para um cliente que entrou atrasado o `t` local dele não diz
+há quanto tempo o mundo simula — um cliente aos 60 s do próprio relógio pode estar olhando
+um mundo de 6 min. O avaliador casa `ntick` → `t` do host e corta por ali.
 
 **Por que `ntick` e não o `tick` das linhas `[SOAK]`.** O `tick` das outras linhas é um
 contador local que começa em zero quando **o processo** sobe, e as instâncias sobem em

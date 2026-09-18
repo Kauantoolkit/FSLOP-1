@@ -341,9 +341,13 @@ namespace Fslop.SpikeB
 
             Vector3 p = viga.transform.position;
 
+            // O `t` entra porque o briefing mede drift "apos 5 min de simulacao
+            // continua", e so o ntick nao diz quantos segundos se passaram — a taxa de
+            // tick nao esta no log. Quem vale e o `t` do HOST: para um cliente que entrou
+            // atrasado, o t local dele nao descreve ha quanto tempo o mundo simula.
             Debug.Log(string.Format(CultureInfo.InvariantCulture,
-                "[SOAK-POS] ntick={0} role={1} id={2} x={3:F4} y={4:F4} z={5:F4}",
-                rede.TimeManager.Tick, papel, identidade, p.x, p.y, p.z));
+                "[SOAK-POS] ntick={0} t={1:F3} role={2} id={3} x={4:F4} y={5:F4} z={6:F4}",
+                rede.TimeManager.Tick, Decorrido(), papel, identidade, p.x, p.y, p.z));
         }
 
         /// <summary>Lado servidor: um par entrou ou saiu.</summary>

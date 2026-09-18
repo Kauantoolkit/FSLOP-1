@@ -59,6 +59,50 @@ def evento(role, ident, ev, tick, t, **extras):
     return "[SOAK-EV] " + " ".join("%s=%s" % kv for kv in campos.items())
 
 
+# Serie de posicao. A viga anda em linha reta no eixo x, 0.05 u por tick de rede
+# (1.5 u/s a 30 Hz). Reta de proposito: com trajetoria periodica, um deslocamento
+# errado poderia casar por coincidencia e o teste ficaria verde sem significar nada.
+N_POS = 400
+NTICK0 = TICK0
+PASSO_U = 0.05
+HZ_REDE = 30.0
+
+
+def pos_do_host(i):
+    """Posicao do host no i-esimo tick de rede da serie."""
+    return (i * PASSO_U, 1.0, 0.0)
+
+
+def posicao(role, ident, ntick, t, xyz):
+    return ("[SOAK-POS] ntick=%d t=%.3f role=%s id=%s x=%.4f y=%.4f z=%.4f"
+            % (ntick, t, role, ident, xyz[0], xyz[1], xyz[2]))
+
+
+def serie_pos(role, ident, desloca_ticks=0, offset_y=0.0, so_antes_de=None,
+              offset_y_antes=0.0):
+    """Linhas [SOAK-POS] de uma instancia.
+
+    desloca_ticks: o que ela mostra no tick N e o que o host tinha em N - desloca.
+    offset_y:      erro constante perpendicular ao movimento. Perpendicular de
+                   proposito — assim a busca de alinhamento NAO consegue escondê-lo,
+                   que e exatamente o que se quer testar.
+    so_antes_de:   se dado, `offset_y_antes` vale para t < esse valor e nada depois.
+    """
+    linhas = []
+    for i in range(N_POS):
+        ntick = NTICK0 + i
+        t = T0 + i / HZ_REDE
+        fonte = i - desloca_ticks
+        if fonte < 0:
+            continue
+        x, y, z = pos_do_host(fonte)
+        erro = offset_y
+        if so_antes_de is not None:
+            erro = offset_y_antes if t < so_antes_de else 0.0
+        linhas.append(posicao(role, ident, ntick, t, (x, y + erro, z)))
+    return linhas
+
+
 def montar_base():
     """Devolve {nome_do_arquivo: [linhas]} de uma corrida que deve passar."""
     host = [meta("host", 0)]
@@ -66,6 +110,8 @@ def montar_base():
     for i in range(N_AMOSTRAS):
         host.append(amostra("host", 0, i))
         cliente.append(amostra("client", 1, i))
+    host.extend(serie_pos("host", 0))
+    cliente.extend(serie_pos("client", 1))
     cliente.append(
         evento("client", 1, "late_join_done", TICK_LATE, T0 + 2,
                elapsed_ms="820.0", world_hash=HASH)
@@ -164,18 +210,77 @@ def caso_input_nao_instrumentado():
     return espera_falha(a, "resposta_do_input")
 
 
-def caso_drift_nao_instrumentado():
-    """Mesma armadilha do input, no campo de drift."""
+def sem_linhas_de_posicao(linhas):
+    return [l for l in linhas if not l.startswith("[SOAK-POS] ")]
+
+
+def caso_drift_sem_serie_do_cliente():
+    """O cliente nao instrumentou posicao.
+
+    Antes da change 15 isto era o caso do campo `drift_max_u=-1`. O campo deixou de
+    existir como medida (nenhuma instancia consegue preenche-lo, ver docs/00), mas a
+    armadilha que ele guardava continua: instancia que nao mede nao pode passar.
+    """
     a = montar_base()
-    a["inst1-client.log"] = [meta("client", 1)] + [
-        amostra("client", 1, i, drift_max_u="-1", drift_p99_u="-1")
-        for i in range(N_AMOSTRAS)
-    ] + [
-        evento("client", 1, "late_join_done", TICK_LATE, T0 + 2,
-               elapsed_ms="820.0", world_hash=HASH),
-        evento("client", 1, "shutdown", TICK0 + 10 * 60, T0 + 10, clean="1", reason="x"),
-    ]
+    a["inst1-client.log"] = sem_linhas_de_posicao(a["inst1-client.log"])
     return espera_falha(a, "drift")
+
+
+def caso_drift_sem_serie_do_host():
+    """Sem a verdade do host nao existe contra o que comparar."""
+    a = montar_base()
+    a["inst0-host.log"] = sem_linhas_de_posicao(a["inst0-host.log"])
+    return espera_falha(a, "drift")
+
+
+def caso_drift_series_nao_se_cruzam():
+    """As duas series existem e nao tem NENHUM ntick em comum.
+
+    Sem este caso, um cruzamento vazio devolveria "pior drift: nenhum" e poderia
+    virar PASS — o pior tipo de verde, o de quem nao comparou nada.
+    """
+    a = montar_base()
+    cliente = sem_linhas_de_posicao(a["inst1-client.log"])
+    cliente += [
+        posicao("client", 1, NTICK0 + 100000 + i, T0 + i / HZ_REDE, pos_do_host(i))
+        for i in range(N_POS)
+    ]
+    a["inst1-client.log"] = cliente
+    return espera_falha(a, "drift")
+
+
+def caso_drift_corrida_curta():
+    """Todos os ticks do host antes dos 5 min: o briefing nao permite concluir nada."""
+    a = montar_base()
+    host = sem_linhas_de_posicao(a["inst0-host.log"])
+    host += [
+        posicao("host", 0, NTICK0 + i, 10.0 + i / HZ_REDE, pos_do_host(i))
+        for i in range(N_POS)
+    ]
+    a["inst0-host.log"] = host
+    return espera_falha(a, "drift")
+
+
+def caso_cliente_atrasado_mas_correto():
+    """Atraso pequeno: PASS, e o avaliador tem que DIZER de quanto foi o atraso.
+
+    2 ticks x 0.05 u = 0.10 u, abaixo do limite de 0.15. O ponto do caso nao e o
+    PASS: e que `atraso de 2 tick(s)` apareca no detalhe. Sem isso, um FAIL futuro
+    seria anunciado sem poder ser explicado, que e metade da razao de a change 15
+    medir dois numeros em vez de um.
+    """
+    a = montar_base()
+    a["inst1-client.log"] = sem_linhas_de_posicao(a["inst1-client.log"]) \
+        + serie_pos("client", 1, desloca_ticks=2)
+    codigo, res = rodar(a)
+    r = res.get("drift")
+    if r is None:
+        return False, "drift nem foi avaliado"
+    if r.status != "PASS":
+        return False, "esperava PASS, veio %s: %s" % (r.status, r.detalhe)
+    if "atraso de 2 tick(s)" not in r.detalhe:
+        return False, "o atraso medido nao apareceu no detalhe: %s" % r.detalhe
+    return True, "drift=%s (codigo %d): %s" % (r.status, codigo, r.detalhe)
 
 
 def caso_relogio_travado():
@@ -265,9 +370,14 @@ def caso_input_lento():
 
 
 def caso_drift_alto():
+    """0.31 u PERPENDICULAR ao movimento: nenhum deslocamento no tempo apaga isso.
+
+    O erro e em y, e a viga anda em x. E o caso que separa divergencia de atraso: se
+    a busca de alinhamento pudesse mascarar um erro real, ela mascararia este.
+    """
     a = montar_base()
-    # i=8 -> t=304, ja passou dos 300 s: entra no recorte da metrica
-    a["inst1-client.log"][9] = amostra("client", 1, 8, drift_max_u="0.3100")
+    a["inst1-client.log"] = sem_linhas_de_posicao(a["inst1-client.log"]) \
+        + serie_pos("client", 1, offset_y=0.31)
     return espera_falha(a, "drift")
 
 
@@ -275,11 +385,13 @@ def caso_drift_antes_dos_300s_nao_conta():
     """Guarda contra o avaliador ser severo demais: drift alto ANTES dos 5 min
     e permitido pelo briefing, e reprovar ali seria falso positivo."""
     a = montar_base()
-    a["inst1-client.log"][1] = amostra("client", 1, 0, drift_max_u="0.9000")  # t=296
+    a["inst1-client.log"] = sem_linhas_de_posicao(a["inst1-client.log"]) \
+        + serie_pos("client", 1, so_antes_de=300.0, offset_y_antes=0.9)
     codigo, res = rodar(a)
     ok = res.get("drift") is not None and res["drift"].status == "PASS"
-    return ok, "drift=%s (codigo %d)" % (
-        res["drift"].status if "drift" in res else "ausente", codigo)
+    return ok, "drift=%s (codigo %d): %s" % (
+        res["drift"].status if "drift" in res else "ausente", codigo,
+        res["drift"].detalhe if "drift" in res else "-")
 
 
 def caso_late_join_divergente():
@@ -344,7 +456,11 @@ CASOS = [
     ("logs de corridas diferentes", caso_runs_misturadas),
     ("corrida curta demais", caso_duracao_curta),
     ("input nao instrumentado (-1)", caso_input_nao_instrumentado),
-    ("drift nao instrumentado (-1)", caso_drift_nao_instrumentado),
+    ("drift: cliente sem serie de posicao", caso_drift_sem_serie_do_cliente),
+    ("drift: host sem serie de posicao", caso_drift_sem_serie_do_host),
+    ("drift: series sem nenhum ntick em comum", caso_drift_series_nao_se_cruzam),
+    ("drift: corrida nao chegou aos 5 min", caso_drift_corrida_curta),
+    ("drift: cliente atrasado mas correto", caso_cliente_atrasado_mas_correto),
     ("relogio travado no meio", caso_relogio_travado),
     ("duracao exatamente no limite", caso_duracao_no_limite),
     ("fps do host abaixo de 60", caso_fps_baixo),
