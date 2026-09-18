@@ -21,6 +21,10 @@ saída registrada em `tasks/FSLOP-1/changes/`.
 boa, o único problema é atraso. A partir de ~3% de perda, a viga teleporta no cliente — e isso
 é uma exigência literal do briefing que ela não cumpre.**
 
+> **Leia antes de usar qualquer número daqui:** todas as corridas foram com **1 cliente** (o
+> briefing pede 4) e com **`-nographics`** (o que invalida o `fps`, ver seção própria). O
+> transporte foi sempre **Tugboat local** — o **FishySteamworks nunca passou um byte**.
+
 Em rede local sem degradação, os **151 corpos** chegam ao cliente em 135 ms e o estado dele
 está correto: descontado o atraso, a divergência sobre o mundo inteiro é `0,020 u` contra o
 limiar de `0,15`. O que reprova o drift é o cliente ficar **~4,3 ticks atrás** (≈143 ms),
@@ -335,11 +339,34 @@ São bytes de **payload** entregues ao transporte e recebidos dele. **Não** inc
 UDP/IP (28 B por datagrama), enquadramento e acks do próprio Tugboat, nem retransmissão. **O
 tráfego real no fio é maior.** É um piso, e tem que ser citado como tal.
 
+## O `fps` publicado neste arquivo NÃO é fps — corrigido em 19/09/2026
+
+Toda linha `PASS fps_host` deste documento veio de corridas com **`-nographics`**. Um player
+`-nographics` **não renderiza**: "quadros no último segundo" vira **taxa de laço**. É por isso
+que a mediana de `3672,9` e os `~500` das corridas em rede são números grandes, bonitos e
+**sobre outra coisa**.
+
+Isso estava escrito no código desde o início — o cabeçalho do `SpikePlayerBuilder` diz, com
+todas as letras, *"Por que COM gráficos: um player `-nographics` não renderiza, então 'quadros
+no último segundo' viraria taxa de loop"*. Eu construí o player para rodar com apresentação e
+depois rodei tudo sem ela, em todas as corridas.
+
+**E há um segundo motivo, independente:** o briefing pede 60 fps *"com 150 rigidbodies **+ 4
+clientes conectados**"*. O máximo que rodou foi **1 cliente**.
+
+**O que os números de `fps` deste arquivo servem para dizer:** que o custo de simulação cabe
+com folga enorme no orçamento de 16,67 ms — a física dos 151 corpos mede `0,377 ms` médio e
+`0,823 ms` p99 (`changes/05`), e isso continua valendo. **Não** dizem que a candidata B
+entrega 60 fps na tela.
+
+**O que falta para o número valer:** rodar o player **sem** `-nographics`, com 4 clientes
+conectados, e declarar `display=local`. Nenhuma das três coisas foi feita junta.
+
 ## O que esta stack ainda NÃO provou
 
 | métrica do briefing | estado |
 |---|---|
-| fps ≥ 60 no host | **PASS**, com a ressalva da diluição acima |
+| fps ≥ 60 no host, 150 corpos **+ 4 clientes** | **NÃO MEDIDO.** Ver "o fps publicado não é fps", abaixo |
 | viga não teleporta | **PASS** com rede real (`0.069`), local (`0.209`) e por modelo (`0.208`) |
 | não teleporta sob 150 ms / 3% | **FAIL** — teleporta em **3 de 4** corridas a 3% (`0,689`, `0,715`, `0,781 u` contra limiar `0,5`), no **cliente**. `docs/99` 21 |
 | resposta < 100 ms | **não medido** — exige personagem predito no cliente, que não existe |

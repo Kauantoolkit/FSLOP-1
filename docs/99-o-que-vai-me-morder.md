@@ -753,3 +753,41 @@ me pergunte. Você não decide design."*
 **Sai daqui quando:** o usuário disser qual atraso é aceitável — ou quando as candidatas A e C
 mostrarem se alguma consegue o que a B não consegue, o que transformaria isto em ponto de
 comparação em vez de limite da abordagem.
+
+## 23. O `fps` medido até 19/09 é TAXA DE LAÇO, não quadros na tela
+
+**Estado:** aberto, e invalida um `PASS` que estava publicado.
+
+Todas as corridas desta task, sem exceção, rodaram com **`-nographics`**. Um player
+`-nographics` **não renderiza**, então "quadros no último segundo" vira **taxa de laço**. A
+mediana de `3672,9` e os `~500` das corridas em rede são números grandes, bonitos e **sobre
+outra coisa**.
+
+**O aviso estava no meu próprio código, desde a `changes/09`.** O cabeçalho do
+`SpikePlayerBuilder` diz: *"Por que COM gráficos: um player `-nographics` não renderiza, então
+'quadros no último segundo' viraria taxa de loop. Seria um número grande, bonito e sobre outra
+coisa."* Construí o player para rodar com apresentação e rodei tudo sem ela — **todas as vezes,
+por mais de vinte corridas**, sem nunca cruzar o comando com o comentário que o justificava.
+
+**E há um segundo motivo, independente do primeiro:** o briefing pede 60 fps *"com 150
+rigidbodies **+ 4 clientes conectados**"*. O máximo que rodou foi **1 cliente**. Mesmo que a
+apresentação estivesse ligada, o cenário medido não seria o do briefing.
+
+**O que os números continuam valendo para dizer:** o custo de **simulação** cabe com folga
+enorme no orçamento de 16,67 ms — física dos 151 corpos em `0,377 ms` médio e `0,823 ms` p99
+(`changes/05`). Isso foi medido em edit mode, com `Physics.Simulate` explícito, e não depende
+de apresentação. **É um piso do orçamento, não uma medida de fps.**
+
+**Por que isto passou tanto tempo:** o avaliador imprimia `PASS fps_host 100.00%` e eu tratei
+o verde como resposta. Uma checagem que aprova o número errado é pior que uma que não existe —
+é a mesma família do falso verde do `-1` (`docs/00`) e do `PASS` que publiquei em "não
+teleporta" (item 21). **Três vezes o mesmo erro: confiar no verde sem perguntar sobre o quê
+ele é.**
+
+**Encaminhamento:** o avaliador deveria **recusar** julgar `fps` quando a corrida não declara
+apresentação ligada — do mesmo jeito que recusa banda não instrumentada. Hoje o `[SOAK-META]`
+tem `display=local|parsec`, que responde *onde*, e não responde *se renderizou*. Falta um campo
+para isso.
+
+**Sai daqui quando:** existir campo no contrato que diga se a corrida renderizou, o avaliador
+recusar `fps` sem ele, e uma corrida com apresentação ligada e 4 clientes publicar o número.
