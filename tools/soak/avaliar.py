@@ -180,16 +180,27 @@ def checar_procedencia(corrida):
     rtts = sorted({m.get("rtt_ms", "?") for m in corrida.metas})
     perdas = sorted({m.get("loss_pct", "?") for m in corrida.metas})
     builds = sorted({m.get("build", "?") for m in corrida.metas})
+    flavors = sorted({m.get("build_flavor", "?") for m in corrida.metas})
     aviso = ""
     if transportes == ["local"]:
         aviso = "  <<< transporte LOCAL: estes numeros NAO valem como 'sobre o relay da Steam'"
     if len(builds) > 1:
         aviso += "  <<< builds diferentes entre instancias: %s" % builds
+    if len(flavors) > 1:
+        # Uma ponta com hooks de profiler e sem stripping e a outra nao: qualquer
+        # numero de tempo desta corrida descreve duas maquinas diferentes.
+        aviso += "  <<< FLAVORS diferentes entre instancias: %s" % flavors
+    if flavors == ["development"]:
+        # Nao reprova: e a unica forma de injetar RTT (docs/99 20). Mas o fps daqui
+        # nao e o fps do produto, e isso tem que estar escrito ao lado do numero.
+        aviso += ("  <<< DEVELOPMENT build: sem stripping e com hooks de profiler. "
+                  "fps daqui NAO vale como fps de release")
     return Resultado(
         "procedencia",
         "INFO",
-        "transporte=%s rtt_injetado=%sms perda_injetada=%s%% build=%s%s"
-        % (",".join(transportes), ",".join(rtts), ",".join(perdas), ",".join(builds), aviso),
+        "transporte=%s rtt_injetado=%sms perda_injetada=%s%% build=%s flavor=%s%s"
+        % (",".join(transportes), ",".join(rtts), ",".join(perdas), ",".join(builds),
+           ",".join(flavors), aviso),
     )
 
 

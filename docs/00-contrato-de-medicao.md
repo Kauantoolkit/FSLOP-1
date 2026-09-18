@@ -35,9 +35,9 @@ auto-descritivo: quem o ler daqui a três meses sabe contra o que ele vale.
 
 ```
 [SOAK-META] run=<id> stack=<A|B|C> role=<host|client> id=<0..3> pid=<int>
-            build=<sha-curto> engine=<versao> transport=<local|steam>
-            display=<local|parsec> rtt_ms=<int> loss_pct=<float>
-            bodies=<int> started=<ISO-8601>
+            build=<sha-curto> build_flavor=<release|development> engine=<versao>
+            transport=<local|steam> display=<local|parsec>
+            rtt_ms=<int> loss_pct=<float> bodies=<int> started=<ISO-8601>
 ```
 
 - `run` — mesmo id nas 4 instâncias da mesma corrida. É a chave de junção.
@@ -48,8 +48,25 @@ auto-descritivo: quem o ler daqui a três meses sabe contra o que ele vale.
   por sessão remota não é o mesmo número que fps no monitor local. Sem este campo, nenhuma
   medição de fps é reprodutível — foi a pendência registrada em `docs/99` item 4 desde o
   início do spike.
-- `rtt_ms` / `loss_pct` — o que foi **injetado**, não o observado.
+- `rtt_ms` / `loss_pct` — o que foi **injetado**, não o observado. `rtt_ms` é de
+  **ida-e-volta**; cada ponta configura metade.
 - `build` — SHA curto do commit que gerou o binário. Corrida sem âncora não é evidência.
+- `build_flavor` — **acrescentado em 18/09/2026.** `release` ou `development`. Existe porque
+  na candidata B o simulador de latência do FishNet **só é consultado em development build**
+  (`docs/99` item 20), e development build **não é o mesmo programa**: sem stripping, com
+  hooks de profiler. **Nenhum número de tempo de uma vale para a outra** — em especial `fps`.
+  Sem este campo, duas corridas incomparáveis pareceriam a mesma.
+
+### Injetar RTT sem efeito é pior que não injetar
+
+A instância que recebe `rtt_ms` ou `loss_pct` maior que zero **tem que** emitir
+`ev=net_degradada ... ativo=1`. Se a injeção foi pedida e o mecanismo está inerte naquele
+build, a instância emite `ev=exception`, o que **reprova a corrida inteira** — de propósito.
+
+O motivo é concreto: o simulador aceita configuração em qualquer build e só é *consultado* em
+alguns. Sem esse par de eventos, uma corrida sairia com `rtt_ms=150` no cabeçalho, rede
+perfeita no resultado, e ninguém saberia. **Número publicado sob uma condição que nunca
+existiu é pior que número nenhum**, porque parece evidência.
 
 ## 2. Linha de amostra — `[SOAK]`
 
@@ -205,6 +222,7 @@ Aperiódica. É o que o PASS/FAIL de late join e de queda do host lê.
 |---|---|---|
 | `lobby_created` | host criou o lobby | `lobby=<id64> code=<str>` |
 | `lobby_joined` | cliente entrou | `via=<invite\|code>` |
+| `net_degradada` | a instância injetou RTT/perda **e a injeção tem efeito** | `rtt_ms=<int> por_sentido_ms=<int> loss_pct=<float> ativo=1` |
 | `transport_up` | o transporte subiu nesta instância | `papel=<host\|client> transporte=<nome> endereco=<str> porta=<int>` |
 | `peer_connected` | um par conectou (no servidor) ou o socket abriu (no cliente) | `conn=<id\|eu>` |
 | `peer_disconnected` | o simétrico do acima | `conn=<id\|eu>` |

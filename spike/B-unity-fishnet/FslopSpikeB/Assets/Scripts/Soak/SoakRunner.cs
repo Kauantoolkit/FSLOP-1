@@ -42,6 +42,14 @@ namespace Fslop.SpikeB
         string run = "sem-id";
         string build = "desconhecido";
         string display = "desconhecido";
+
+        /// <summary>
+        /// RTT de ida-e-volta a injetar, em ms, e perda em porcento. Os dois do briefing:
+        /// "sob 150ms RTT e 3% packet loss simulados". Zero = nao injeta nada, que e o que
+        /// todas as corridas ate 18/09 fizeram.
+        /// </summary>
+        long rttMs;
+        double lossPct;
         float duracaoAlvo = 30f;
 
         /// <summary>
@@ -339,6 +347,8 @@ namespace Fslop.SpikeB
             transporte.SetPort(porta);
             transporte.SetClientAddress(endereco);
 
+            ConfigurarRedeRuim();
+
             rede.ServerManager.OnRemoteConnectionState += AoMudarEstadoDoPar;
             rede.ServerManager.OnAuthenticationResult += AoAutenticar;
             rede.ClientManager.OnClientConnectionState += AoMudarEstadoDoCliente;
@@ -356,6 +366,51 @@ namespace Fslop.SpikeB
             Evento("transport_up", string.Format(CultureInfo.InvariantCulture,
                 "papel={0} transporte={1} endereco={2} porta={3}",
                 papel, transporte.GetType().Name, endereco, porta));
+        }
+
+        /// <summary>
+        /// Injeta o RTT e a perda que o briefing manda simular: "sob 150ms RTT e 3% packet
+        /// loss simulados".
+        ///
+        /// METADE do RTT vai para cada ponta. O simulador do FishNet aplica o valor
+        /// configurado por pacote e por SENTIDO (LatencySimulator.cs:245-247, latencia em
+        /// segundos = _latency/1000 somada a cada pacote de saida), e as duas instancias
+        /// rodam o proprio simulador — logo ida + volta = 2x o valor.
+        ///
+        /// A ARMADILHA, e e por isso que existe a checagem no fim: o simulador e publico e
+        /// aceita configuracao em qualquer build, mas os pontos que o CONSULTAM estao atras
+        /// de `#if DEVELOPMENT`, que o TransportManager define como
+        /// `UNITY_EDITOR || DEVELOPMENT_BUILD` (TransportManager.cs:1-3). Num build de
+        /// release isto roda inteiro, sem erro, e nao tem efeito nenhum — uma corrida sairia
+        /// com `rtt_ms=150` no cabecalho e rede perfeita no resultado. Numero publicado com
+        /// condicao que nunca existiu e pior que numero nenhum.
+        /// </summary>
+        void ConfigurarRedeRuim()
+        {
+            if (rttMs <= 0 && lossPct <= 0d)
+            {
+                return;
+            }
+
+            var simulador = rede.TransportManager.LatencySimulator;
+            simulador.SetLatency(rttMs / 2);
+            simulador.SetPacketLoss(lossPct / 100d);
+            simulador.SetEnabled(true);
+
+            // Debug.isDebugBuild, e nao `#if DEVELOPMENT_BUILD`: o Unity 6 deprecou a
+            // diretiva (UAC0009) e recomenda a checagem em runtime. Ela tambem e a pergunta
+            // certa — o que importa nao e como este codigo foi compilado, e se o programa que
+            // esta rodando AGORA e aquele em que o simulador do FishNet e consultado.
+            if (Application.isEditor || Debug.isDebugBuild)
+            {
+                Evento("net_degradada", string.Format(CultureInfo.InvariantCulture,
+                    "rtt_ms={0} por_sentido_ms={1} loss_pct={2:F1} ativo=1",
+                    rttMs, rttMs / 2, lossPct));
+            }
+            else
+            {
+                Evento("exception", "where=LatencySimulator_inerte_em_build_de_release");
+            }
         }
 
         /// <summary>
@@ -647,16 +702,24 @@ namespace Fslop.SpikeB
             // display= nao estava no contrato original. Entrou porque docs/99 item 4 ja
             // registrava que medicao de fps sem dizer se foi no monitor local ou por sessao
             // remota nao e reprodutivel nesta maquina, que tem adaptador virtual do Parsec.
+            // build_flavor entrou porque o simulador de latencia do FishNet so e consultado
+            // em development build (docs/99 item 20), e development build NAO e o mesmo
+            // programa — sem stripping, com hooks de profiler. O fps de um nao vale para o
+            // outro. Sem este campo, duas corridas incomparaveis pareceriam a mesma.
             Linha(string.Format(CultureInfo.InvariantCulture,
-                "[SOAK-META] run={0} stack=B role={1} id={2} pid={3} build={4} engine={5} " +
-                "transport=local display={6} rtt_ms=0 loss_pct=0.0 bodies={7} started={8}",
+                "[SOAK-META] run={0} stack=B role={1} id={2} pid={3} build={4} " +
+                "build_flavor={5} engine={6} transport=local display={7} rtt_ms={8} " +
+                "loss_pct={9:F1} bodies={10} started={11}",
                 run,
                 papel,
                 identidade,
                 System.Diagnostics.Process.GetCurrentProcess().Id,
                 build,
+                Debug.isDebugBuild ? "development" : "release",
                 Application.unityVersion,
                 display,
+                rttMs,
+                lossPct,
                 SouServidor ? EsperadoDeCorpos() : 0,
                 DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)));
         }
@@ -869,6 +932,21 @@ namespace Fslop.SpikeB
                         int.TryParse(args[i + 1], NumberStyles.Integer,
                             CultureInfo.InvariantCulture, out passosPorLado);
                         passosPorLado = Mathf.Max(passosPorLado, 1);
+                        break;
+
+                    // RTT de IDA-E-VOLTA. O simulador do FishNet aplica o valor dele por
+                    // pacote e por sentido (LatencySimulator.cs:245), e cada instancia roda
+                    // o proprio simulador — entao o que se configura la e metade disto.
+                    case "-soakRtt":
+                        long.TryParse(args[i + 1], NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out rttMs);
+                        rttMs = System.Math.Max(rttMs, 0);
+                        break;
+
+                    case "-soakLoss":
+                        double.TryParse(args[i + 1], NumberStyles.Float,
+                            CultureInfo.InvariantCulture, out lossPct);
+                        lossPct = System.Math.Max(lossPct, 0d);
                         break;
                 }
             }
