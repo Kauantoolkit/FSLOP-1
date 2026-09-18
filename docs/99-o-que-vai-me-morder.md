@@ -341,6 +341,13 @@ ainda é "carregar junto" e quanto já é elástico é design, item 9.
 **Sai daqui quando:** o contrato de medição ganhar um segundo campo para o carregar, com
 limiar escolhido por quem joga.
 
+**Confirmado uma segunda vez, em 18/09, e desta vez em rede** (`errors/07`). O cliente seguia
+a viga a **um terço** da velocidade do host, chegando a 10 u de distância — e o
+`carry_jump_u` dele estava em `0.0099`, contra `0.0085` do host. Dois números próximos, os
+dois pequenos, os dois "razoáveis". A métrica mede **suavidade**, e um objeto que segue liso
+a trajetória **errada** passa com folga. Não é mais um furo hipotético: já deixou passar um
+defeito real.
+
 ## 15. "Carregável por até 4" não é imposto por nada
 
 **Estado:** aberto, e é design — não é meu para fechar.
@@ -422,3 +429,35 @@ comparação — e é exatamente o tipo de custo escondido que o spike existe pa
 **Sai daqui quando:** o transporte decorador existir e uma corrida publicar banda real; ou
 quando se decidir que banda fica `[NÃO MEDIDO]` para a B e isso for dito no relatório.
 
+
+## 18. Cena gerada por código não passa pelos passos que a biblioteca espera do Editor
+
+**Estado:** aberto, e já mordeu **duas vezes seguidas** — vai morder na candidata C.
+
+`decisions/07` decidiu montar a cena do spike por script, e a razão continua boa: 150 corpos
+precisam nascer em posição determinística para duas corridas poderem comparar `world_hash`.
+O custo não estava escrito, e é este: **tudo que uma biblioteca espera que uma pessoa faça
+pelo Inspector ou por um item de menu simplesmente não acontece.**
+
+Os dois casos, os dois na mesma semana, os dois no mesmo componente:
+
+| o que faltou | como se manifestou | como foi achado |
+|---|---|---|
+| id de cena do `NetworkObject` (`errors/06`) | a viga **não existia** em ponta nenhuma; cliente com hash de conjunto vazio por 28 s | aviso num log — **o do host**, não o do cliente |
+| `_componentConfiguration` do `NetworkTransform` (`errors/07`) | a viga existia e seguia a **1/3 da velocidade**, até 10 u errada | só apareceu quando uma segunda série de posição existiu para comparar |
+
+O padrão: **default de biblioteca vira escolha implícita de quem gera a cena**, e nenhuma
+dessas escolhas passa por revisão de ninguém. Quem monta pelo Inspector é obrigado a olhar o
+campo; quem monta por código nunca vê que ele existe.
+
+E os dois falharam **em silêncio, com números plausíveis**. Nenhum produziu exceção. O
+segundo não produziu nem aviso.
+
+**O que fazer na candidata C, antes de medir qualquer coisa:** listar quais passos de
+editor/importação a solução de rede escolhida espera, e ou executá-los pelo gerador, ou
+declarar no relatório que não foram executados. Não adianta esperar o sintoma: o sintoma
+destes dois foi um número razoável.
+
+**Sai daqui quando:** existir, para cada candidata, uma conferência explícita de que a cena
+gerada tem o mesmo estado serializado que uma cena montada à mão teria — e essa conferência
+rodar junto com o gerador, não na minha cabeça.

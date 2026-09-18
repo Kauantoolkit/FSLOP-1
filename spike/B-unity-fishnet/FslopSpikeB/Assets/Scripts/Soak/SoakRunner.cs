@@ -369,6 +369,19 @@ namespace Fslop.SpikeB
             else if (args.ConnectionState == LocalConnectionState.Stopped)
             {
                 Evento("peer_disconnected", "conn=eu");
+
+                // A metrica "queda do host" do briefing: "encerra com mensagem limpa, sem
+                // excecao nao tratada. Host migration NAO e requisito." Ou seja, o certo
+                // aqui e SAIR, e sair dizendo por que — nao tentar reconectar, nao seguir
+                // simulando um mundo que nao existe mais.
+                //
+                // O guarda do `encerrando` importa: quando o proprio cliente encerra por
+                // duracao, o socket tambem para, e sem ele este caminho sobrescreveria o
+                // motivo real do encerramento por `host_lost`.
+                if (!SouServidor && !encerrando)
+                {
+                    Encerrar("host_lost");
+                }
             }
         }
 
@@ -626,10 +639,29 @@ namespace Fslop.SpikeB
             }
         }
 
-        void Encerrar()
+        /// <summary>
+        /// Encerramento limpo. O host anuncia `host_quit` ANTES do proprio shutdown: e o
+        /// evento que o contrato usa para distinguir "o host saiu de proposito" de "o host
+        /// caiu", e sem ele o avaliador nao tem como saber que a desconexao do cliente era
+        /// esperada.
+        /// </summary>
+        void Encerrar(string motivo = "duracao_atingida")
         {
+            if (encerrando)
+            {
+                return;
+            }
+
             encerrando = true;
-            Evento("shutdown", "clean=1 reason=duracao_atingida excecoes=" + excecoes);
+
+            if (SouServidor)
+            {
+                Evento("host_quit", "motivo=" + motivo);
+            }
+
+            Evento("shutdown", string.Format(CultureInfo.InvariantCulture,
+                "clean=1 reason={0} excecoes={1}", motivo, excecoes));
+
             Application.Quit(0);
         }
 
