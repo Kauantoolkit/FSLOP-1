@@ -585,27 +585,35 @@ minhas** (rede pior dando erro menor).
 
 ### O que a varredura controlada mostra
 
-RTT fixo em **150 ms**, perda variando, alinhamento sub-tick. Corridas de 400 s com o cliente
-entrando aos 100 s, mais a corrida de 10 min a 3% para comparação:
+RTT fixo em **150 ms**, perda variando, alinhamento sub-tick. **Dez corridas**: as de 400 s com
+o cliente entrando aos 100 s, mais a de 10 min a 3%.
 
-| perda | `drift_alinhado` | atraso | maior salto da viga **no cliente** |
+| perda | corridas | `drift_alinhado` | teleporte **no cliente** |
 |---|---|---|---|
-| 0% | `0,0180 u` | 7,9 t | dentro do limite |
-| 1% | `0,0191 u` | 7,5 t | dentro do limite |
-| **3%** (400 s) | **`0,3541 u`** | 7,6 t | **`0,689 u` — REPROVA (limite 0,5)** |
-| **5%** (400 s) | **`0,3857 u`** | 8,1 t | **`0,743 u` — REPROVA** |
-| 3% (10 min) | `0,0903 u` | 8,4 t | dentro do limite |
+| 0% | 1 | `0,0180 u` | 0 de 1 |
+| 1% | 1 | `0,0191 u` | 0 de 1 |
+| 2% | 2 | `0,1112` – `0,1576 u` | **0 de 2** |
+| **3%** | 4 | `0,0903` – `0,4081 u` | **3 de 4** — `0,689`, `0,715`, `0,781 u` |
+| **5%** | 2 | `0,2354` – `0,3857 u` | **1 de 2** — `0,743 u` |
 
-**Duas leituras, e as duas importam:**
+**Três leituras, e as três importam:**
 
-**1. O briefing exige, literalmente, que o objeto carregado não teleporte sob 150 ms e 3%.
-Ele teleporta.** `0,689 u` e `0,743 u` contra o limiar de `0,5`, no **cliente** — o host nunca
-passa de `0,08`, porque no host não há rede, há física.
+**1. O briefing exige que o objeto carregado não teleporte sob 150 ms e 3%. Ele teleporta em
+3 das 4 corridas nessa condição** — `0,689`, `0,715` e `0,781 u` contra o limiar de `0,5`. No
+host o maior salto nunca passa de `0,13`, porque no host não há rede, há física.
 
-**2. O efeito é BIMODAL, não uma rampa.** A 3% houve uma corrida com `0,354` e teleporte, e
-outra com `0,090` e nenhum. A perda é sorteada; o que produz o salto é provavelmente uma
-**rajada** de pacotes perdidos, não a taxa média. Isso significa que **a taxa de perda sozinha
-não prevê o comportamento** — e que uma corrida limpa a 3% não é evidência de nada.
+**2. O salto nunca apareceu em ≤2%** (4 corridas) **e apareceu em 4 das 6 em ≥3%.** A fronteira
+está entre 2% e 3%, agora com duas corridas de cada lado em vez de uma.
+
+**3. A divergência já estoura o limiar a 2%, sem teleporte nenhum.** `0,1576 u` numa das duas
+corridas de 2%, contra `0,15`. São dois modos de falha diferentes e eles não começam juntos: o
+erro acumulado cresce antes, e o salto entra depois.
+
+**A variância é enorme e é a própria assinatura do mecanismo.** A 3% os valores vão de `0,090`
+a `0,408`; a 5% uma corrida saltou e a outra não. Isso é o esperado de um evento de limiar
+disparado por **rajada** (ver a seção da causa): ou a rajada cabe na janela da corrida, ou não.
+**A taxa média de perda não prevê o resultado de uma corrida** — ela prevê a frequência com que
+o salto ocorre.
 
 ### A assimetria que decide a leitura
 

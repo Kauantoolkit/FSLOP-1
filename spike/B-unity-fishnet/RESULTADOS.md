@@ -27,10 +27,11 @@ limiar de `0,15`. O que reprova o drift é o cliente ficar **~4,3 ticks atrás**
 pondo o erro visível em `0,67 u`.
 
 Sob os **150 ms que o briefing manda simular**, o atraso dobra — previsto antes de medir — e o
-erro visível vai a `1,28 u`. Até **1% de perda** a divergência continua desprezível
-(`0,019 u`). A partir de **3%** ela salta para `0,35`–`0,39 u` **e a viga dá saltos de
-`0,689 u` e `0,743 u` no cliente**, acima do limiar de `0,5`. O efeito é **bimodal**: uma
-corrida a 3% não teve salto nenhum. Ver `docs/99` itens 19 e 21.
+erro visível vai a `1,28 u`. Em **dez corridas** variando a perda: até **1%** a divergência é
+desprezível (`0,019 u`); a **2%** ela já estoura o limiar numa das duas corridas (`0,1576`
+contra `0,15`) **sem** teleporte; a partir de **3%** a viga **teleporta no cliente em 3 das 4
+corridas** (`0,689`, `0,715`, `0,781 u` contra `0,5`). São **dois modos de falha** e eles não
+começam juntos. Ver `docs/99` itens 19 e 21.
 
 **O que passa nas condições exatas do briefing:** o late join entrega os 151 corpos em
 `236,5 ms`, a queda do host encerra limpa e não há exceção em 10 min.
@@ -125,16 +126,30 @@ exigências:
 Corridas de 400 s com o cliente entrando aos 100 s, mais a de 10 min a 3% para comparação.
 Todos os números com **alinhamento sub-tick** (`changes/22`).
 
-| perda | `drift_alinhado` | atraso | maior salto da viga **no cliente** |
-|---|---|---|---|
-| 0% | `0,0180 u` | 7,9 t | dentro do limite |
-| 1% | `0,0191 u` | 7,5 t | dentro do limite |
-| **3%** (400 s) | **`0,3541 u`** | 7,6 t | **`0,689 u` — REPROVA** |
-| **5%** (400 s) | **`0,3857 u`** | 8,1 t | **`0,743 u` — REPROVA** |
-| 3% (10 min) | `0,0903 u` | 8,4 t | dentro do limite |
+**Dez corridas.** As de 400 s com o cliente entrando aos 100 s, mais a de 10 min a 3%.
 
-**O efeito é bimodal, não uma rampa.** A 3% houve uma corrida com `0,354` e teleporte e outra
-com `0,090` e nenhum. **A taxa média de perda sozinha não prevê o comportamento.**
+| perda | corridas | `drift_alinhado` | teleporte **no cliente** |
+|---|---|---|---|
+| 0% | 1 | `0,0180 u` | 0 de 1 |
+| 1% | 1 | `0,0191 u` | 0 de 1 |
+| 2% | 2 | `0,1112` – `0,1576 u` | **0 de 2** |
+| **3%** | 4 | `0,0903` – `0,4081 u` | **3 de 4** — `0,689`, `0,715`, `0,781 u` |
+| **5%** | 2 | `0,2354` – `0,3857 u` | **1 de 2** — `0,743 u` |
+
+**Três leituras:**
+
+1. **O briefing exige que o objeto carregado não teleporte sob 150 ms e 3%. Ele teleporta em
+   3 das 4 corridas nessa condição.** No host o maior salto nunca passa de `0,13`, porque no
+   host não há rede, há física;
+2. **o salto nunca apareceu em ≤2%** (4 corridas) **e apareceu em 4 das 6 em ≥3%**. A fronteira
+   está entre 2% e 3%;
+3. **a divergência já estoura o limiar a 2%, sem teleporte nenhum** (`0,1576` contra `0,15`).
+   São dois modos de falha diferentes, e não começam juntos.
+
+**A variância é enorme e é a assinatura do mecanismo.** A 3% os valores vão de `0,090` a
+`0,408`; a 5% uma corrida saltou e a outra não. É o esperado de um evento de limiar disparado
+por **rajada**: ou a rajada cabe na janela da corrida, ou não. **A taxa média de perda não
+prevê o resultado de uma corrida** — prevê a frequência com que o salto ocorre.
 
 ### Por que ele teleporta: é uma escolha de projeto do FishNet
 
@@ -269,7 +284,7 @@ medida com a pilha dormindo, que é o caso barato. A intensidade tem dial
 |---|---|
 | fps ≥ 60 no host | **PASS**, com a ressalva da diluição acima |
 | viga não teleporta | **PASS** com rede real (`0.069`), local (`0.209`) e por modelo (`0.208`) |
-| não teleporta sob 150 ms / 3% | **FAIL** — `0,689 u` e `0,743 u` no **cliente**, contra limiar `0,5`. Bimodal: uma corrida a 3% não teve salto. `docs/99` 21 |
+| não teleporta sob 150 ms / 3% | **FAIL** — teleporta em **3 de 4** corridas a 3% (`0,689`, `0,715`, `0,781 u` contra limiar `0,5`), no **cliente**. `docs/99` 21 |
 | resposta < 100 ms | **não medido** — exige personagem predito no cliente, que não existe |
 | drift < 0.15 u após 5 min | **FAIL**. Sem RTT: `0,67 u` / alinhado `0,020`. Sob 150 ms: `1,28 u` / alinhado `0,019` a 1% de perda, `0,35`–`0,39` a partir de 3%. `docs/99` 19 e 21 |
 | banda média e pico | **não medível nesta stack** — `rx/tx = -1`. FishNet 4.7.3 não expõe contagem de bytes (`docs/99` 17) |
