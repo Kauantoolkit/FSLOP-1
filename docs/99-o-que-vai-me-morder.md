@@ -614,17 +614,64 @@ sem ocorrência não prova nada**. Foi assim que eu publiquei um `PASS` errado: 
 10 min a 3% não teve o salto, e eu escrevi "objeto carregado não teleporta: PASS". Estava
 lendo a ausência de um evento raro como prova da impossibilidade dele.
 
+### A causa, lida linha a linha — e o salto é DELIBERADO na biblioteca
+
+Minha hipótese inicial ("rajada esvazia a fila e o `MoveTowards` cobre a distância num
+quadro") estava **errada**. O mecanismo real é o oposto: a fila **transborda**, e o FishNet
+**descarta e salta de propósito**. `NetworkTransform.cs:2418-2437`:
+
+```csharp
+/* If the queue is excessive beyond interpolation then
+ * dequeue extras to prevent from dropping behind too
+ * quickly. ... but
+ * when connections are unstable results may come in chunks
+ * and for a better experience the older parts of the chunks
+ * will be dropped. */
+if (_goalDataQueue.Count > _interpolation + 3)
+{
+    while (_goalDataQueue.Count > _interpolation)
+    {
+        GoalData tmpGd = _goalDataQueue.Dequeue();
+        ResettableObjectCaches<GoalData>.Store(tmpGd);
+    }
+
+    //Snap to the next data to fix any smoothing timings.
+    SetCurrentGoalData(_goalDataQueue.Dequeue());
+    SetInstantRates(_currentGoalData!.Rates, 1, -1f);
+    SnapProperties(_currentGoalData.Transforms, true);
+}
+```
+
+As duas últimas linhas saltam, cada uma por seu caminho:
+
+- `SetInstantRates(rd, 1, -1f)` → `rd.Update(-1f, ...)` (linha 2060) → no `MoveToTarget`,
+  `rate == -1f` → `t.localPosition = td.Position` (linha 1661). Sem suavização;
+- `SnapProperties(td, force: true)` → linhas 2026-2029, com `force` os três eixos vão direto
+  para a posição do alvo.
+
+**Isso explica a bimodalidade exatamente.** É um evento de **limiar**, não um efeito
+proporcional: com `_interpolation = 2` (default), o corte dispara quando a fila passa de
+`2 + 3 = 5`, ou seja, ao chegarem **6 snapshots de uma vez** — a 30 Hz, 200 ms de entrega
+atrasada num bloco. Ou a rajada é grande o bastante e a viga salta, ou não é e nada acontece.
+**Não existe meio-termo**, e é por isso que não há rampa.
+
+**A perda de pacote produz exatamente esse padrão de entrega em blocos**, porque o canal
+confiável retransmite e o que foi retido chega junto.
+
+**É uma escolha de projeto do FishNet, e o comentário dela é explícito:** "for a better
+experience the older parts of the chunks will be dropped". A biblioteca troca **continuidade
+de posição** por **recuperação de atraso**. Para a maioria dos jogos isso é o certo. Para um
+briefing que diz "objeto carregado **não teleporta**", é exatamente a troca errada.
+
 ### O que ainda não se sabe
 
 - **a fronteira está entre 1% e 3%**, e com apenas um ponto em cada lado. Falta 2%, e falta
   repetir cada ponto — 3% já mostrou dois resultados opostos em duas corridas;
-- **por que o salto acontece.** A hipótese é rajada de perda esvaziando a fila de
-  interpolação, seguida de um `MoveTowards` que cobre a distância acumulada num quadro. Não
-  foi verificada no código nem no log;
-- **se reconciliação resolveria.** É a diferença entre isto e o item 19: lá o problema é da
-  métrica; aqui é da abordagem — cliente que só interpola não tem como se recuperar de uma
-  rajada sem saltar.
+- **se subir `_interpolation` resolve ou só adia.** O corte dispara em `_interpolation + 3`;
+  com interpolação maior, a fila tolera rajadas maiores — ao custo de mais atraso, que é
+  justamente o que o item 19 já não tem folga para pagar. **Não foi medido.**
 
 **Sai daqui quando:** houver repetição suficiente para dizer com que frequência o salto ocorre
-a 3%, e a causa estiver explicada linha a linha. Só então "mudar a abordagem" vira pergunta
-com fundamento para o usuário.
+a 3%, e uma varredura de `_interpolation` disser se existe valor que segure a rajada sem
+estourar o atraso. Aí vira pergunta com fundamento para o usuário — e é pergunta de
+arquitetura (aceitar o salto, aceitar mais atraso, ou trocar de abordagem), não ajuste.

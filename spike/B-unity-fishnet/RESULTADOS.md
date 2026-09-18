@@ -134,8 +134,43 @@ Todos os números com **alinhamento sub-tick** (`changes/22`).
 | 3% (10 min) | `0,0903 u` | 8,4 t | dentro do limite |
 
 **O efeito é bimodal, não uma rampa.** A 3% houve uma corrida com `0,354` e teleporte e outra
-com `0,090` e nenhum. A perda é sorteada, e o que provavelmente produz o salto é uma **rajada**
-de pacotes perdidos, não a taxa média — ou seja, **a taxa sozinha não prevê o comportamento**.
+com `0,090` e nenhum. **A taxa média de perda sozinha não prevê o comportamento.**
+
+### Por que ele teleporta: é uma escolha de projeto do FishNet
+
+Lido em `NetworkTransform.cs:2418-2437`. Quando a fila de snapshots passa de `_interpolation + 3`
+— com o default `_interpolation = 2`, isso é **6 snapshots chegando de uma vez**, 200 ms de
+entrega represada a 30 Hz — a biblioteca **descarta os intermediários e salta**:
+
+```csharp
+/* ... when connections are unstable results may come in chunks
+ * and for a better experience the older parts of the chunks
+ * will be dropped. */
+if (_goalDataQueue.Count > _interpolation + 3)
+{
+    while (_goalDataQueue.Count > _interpolation)
+        { GoalData tmpGd = _goalDataQueue.Dequeue(); ... }
+
+    SetCurrentGoalData(_goalDataQueue.Dequeue());
+    SetInstantRates(_currentGoalData!.Rates, 1, -1f);   // rate -1 => t.localPosition = goal
+    SnapProperties(_currentGoalData.Transforms, true);  // force => os 3 eixos direto no alvo
+}
+```
+
+**Perda de pacote produz exatamente esse padrão de entrega em blocos**, porque o canal
+confiável retransmite e o que ficou retido chega junto.
+
+É um **evento de limiar**, e é daí que vem a bimodalidade: ou a rajada enche a fila e a viga
+salta, ou não enche e nada acontece. Não existe meio-termo.
+
+E é **deliberado**: o comentário da própria biblioteca diz que descartar o começo do bloco dá
+"a better experience". O FishNet troca **continuidade de posição** por **recuperação de
+atraso** — a troca certa para a maioria dos jogos, e exatamente a errada para um briefing que
+exige "o objeto carregado não teleporta".
+
+**Existe um botão, e ele não foi medido:** o corte dispara em `_interpolation + 3`, então
+interpolação maior tolera rajada maior — ao custo de mais atraso, que é justamente o que o
+item 19 já não tem folga para pagar.
 
 **Até 1% de perda, a divergência é desprezível** (`0,018`–`0,019 u`, contra o limiar de `0,15`).
 A fronteira está entre 1% e 3%, com **um ponto de cada lado** e um contraexemplo dentro do 3%.
