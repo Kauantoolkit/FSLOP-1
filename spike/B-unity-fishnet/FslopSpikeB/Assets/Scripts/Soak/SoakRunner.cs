@@ -102,6 +102,9 @@ namespace Fslop.SpikeB
         float inicioDoLateJoin;
         bool mundoCompleto;
 
+        /// <summary>Transporte que conta bytes, ou nulo se a cena nao tiver um.</summary>
+        ByteCountingTugboat contador;
+
         void Awake()
         {
             // Sem stack trace nas linhas de log: o contrato manda uma linha por amostra, sem
@@ -389,6 +392,12 @@ namespace Fslop.SpikeB
             var transporte = rede.TransportManager.Transport;
             transporte.SetPort(porta);
             transporte.SetClientAddress(endereco);
+
+            // Pode ser nulo: se a cena for regerada sem o ByteCountingTugboat, o
+            // TransportManager adiciona um Tugboat comum sozinho (TransportManager.cs:267) e
+            // a corrida roda igual — com rx/tx voltando a -1, que e o certo. O que NAO pode
+            // acontecer e sair numero de banda sem contador por tras.
+            contador = transporte as ByteCountingTugboat;
 
             ConfigurarRedeRuim();
 
@@ -796,19 +805,28 @@ namespace Fslop.SpikeB
             // "fps=1.0" para uma janela de 2.5 s. Divide-se pela janela que de fato passou.
             float janela = Mathf.Max(relogioDaAmostra, 1e-4f);
 
-            // rx/tx = -1 significa NAO INSTRUMENTADO, e nao "zero bytes". O FishNet 4.7.3 nao
-            // expoe contagem de bytes de socket: NetworkTrafficStatistics.cs inteiro esta sob
-            // `#if UNITY_EDITOR || DEVELOPMENT_BUILD`, e as classes que guardam os contadores
-            // (NetworkTraffic, e os campos Inbound/Outbound de BidirectionalNetworkTraffic)
-            // sao `internal` ao assembly FishNet.Runtime. Medir banda exige um Transport
-            // decorador que conte na passagem — e isso e change propria, nao um campo que eu
-            // possa preencher com palpite.
+            // rx/tx = -1 continua significando NAO INSTRUMENTADO, e nao "zero bytes" — e e
+            // o que sai quando o transporte da cena nao e o que conta (docs/00). Quando e,
+            // o numero vem do ByteCountingTugboat: bytes de PAYLOAD entregues ao transporte
+            // e recebidos dele, SEM cabecalho UDP/IP, sem enquadramento e sem acks do
+            // Tugboat. O valor real no fio e maior, e a ressalva viaja junto do numero.
+            float rx = -1f;
+            float tx = -1f;
+            if (contador != null)
+            {
+                contador.TakeAndReset(out long enviados, out long recebidos);
+                tx = enviados / 1024f / janela;
+                rx = recebidos / 1024f / janela;
+            }
+
             Linha(string.Format(CultureInfo.InvariantCulture,
                 "[SOAK] t={0:F3} tick={1} ntick={2} role={3} id={4} fps={5:F1} " +
-                "frame_p99_ms={6:F3} rx_KBps=-1 tx_KBps=-1 drift_max_u=-1 drift_p99_u=-1 " +
-                "carry_jump_u={7:F4} input_ms_p99=-1 bodies_awake={8} world_hash={9}",
+                "frame_p99_ms={6:F3} rx_KBps={7:F2} tx_KBps={8:F2} drift_max_u=-1 " +
+                "drift_p99_u=-1 carry_jump_u={9:F4} input_ms_p99=-1 bodies_awake={10} " +
+                "world_hash={11}",
                 Decorrido(), tick, TickDaRede(), papel, identidade,
-                quadrosNoSegundo / janela, p99, maiorSaltoDaViga, acordados, HashDoMundo()));
+                quadrosNoSegundo / janela, p99, rx, tx, maiorSaltoDaViga, acordados,
+                HashDoMundo()));
         }
 
         /// <summary>

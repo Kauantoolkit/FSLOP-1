@@ -57,4 +57,8 @@ Player-prev.log
 # handle aberto nele por um tempo depois do processo sair, entao ele nem sempre pode
 # ser apagado — mas nunca deve entrar no repositorio: e saida de execucao, e a regra
 # de saida de execucao ja esta la em cima.
-build-*.log
+#
+# Padrao amplo de proposito: a primeira versao era `build-*.log` e deixou passar
+# `bp-*.log` na primeira vez que eu usei outro nome. Prefixo por prefixo e jogo de
+# gato e rato; a regra certa e "log solto na raiz do projeto Unity nao entra".
+spike/*/FslopSpikeB/*.log

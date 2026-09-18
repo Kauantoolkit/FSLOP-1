@@ -432,6 +432,13 @@ namespace Fslop.SpikeB.EditorTools
         static void CreateNetwork(GameObject prefabDaCaixa)
         {
             var go = new GameObject(NetworkName);
+
+            // O transporte entra ANTES do NetworkManager. Lido em TransportManager.cs:268:
+            // ele adiciona um Tugboat sozinho quando nao acha Transport nenhum no objeto —
+            // e ai o nosso, que conta bytes, seria ignorado. Adicionando primeiro, o
+            // TransportManager encontra este e nao cria outro.
+            go.AddComponent<ByteCountingTugboat>();
+
             var manager = go.AddComponent<FishNet.Managing.NetworkManager>();
 
             // SpawnablePrefabs nao pode ficar nulo: NetworkManager.ValidateSpawnablePrefabs

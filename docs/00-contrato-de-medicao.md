@@ -87,7 +87,7 @@ Uma por segundo, por instância. É a série temporal.
 | `ntick` | todos | tick **da rede**, ou `-1` quando não há rede. É o único da linha que serve para casar instâncias. |
 | `fps` | todos | quadros no último segundo. Não é média móvel. |
 | `frame_p99_ms` | todos | p99 dos tempos de quadro **do último segundo** |
-| `rx_KBps` / `tx_KBps` | todos | bytes de socket no último segundo ÷ 1024 |
+| `rx_KBps` / `tx_KBps` | todos | bytes de **payload** entregues ao transporte / recebidos dele, na janela da amostra, ÷ 1024. Ver a ressalva abaixo. `-1` se a stack não instrumentar. |
 | `drift_max_u` | **ninguém** | `-1` nos dois papéis. Ver "drift não cabe na linha de amostra", abaixo. |
 | `drift_p99_u` | **ninguém** | idem |
 | `carry_jump_u` | todos | maior salto de posição da viga entre dois quadros **consecutivos** no último segundo |
@@ -115,12 +115,24 @@ Regra geral, escrita em 17/09 depois de ela ser violada. O contrato já usava `-
 - **campo que a stack não consegue emitir é lacuna daquela stack**, e aparece no relatório
   como lacuna — não vira campo opcional nem valor inventado.
 
-**Lacuna conhecida da candidata B:** `rx_KBps`/`tx_KBps` saem `-1`. O FishNet 4.7.3 não
-expõe contagem de bytes de socket: `NetworkTrafficStatistics.cs` inteiro está sob
-`#if UNITY_EDITOR || DEVELOPMENT_BUILD`, e as classes que guardam os contadores
-(`NetworkTraffic`, e os campos `InboundTraffic`/`OutboundTraffic` de
-`BidirectionalNetworkTraffic`) são `internal` ao assembly `FishNet.Runtime`. Medir banda
-nessa stack exige um `Transport` decorador que conte na passagem.
+### Banda é PAYLOAD, e essa ressalva é parte do número
+
+**Corrigido em 19/09/2026.** Até aqui esta seção dizia que a candidata B não conseguia emitir
+banda. Ela consegue, desde que o transporte da cena seja um que conte (`ByteCountingTugboat`,
+`docs/99` 17).
+
+**O que o número é:** bytes de **payload** entregues ao transporte em `SendToServer` /
+`SendToClient` e recebidos dele em `HandleClientReceivedDataArgs` /
+`HandleServerReceivedDataArgs`.
+
+**O que o número NÃO é:** não inclui cabeçalho UDP/IP (28 B por datagrama), nem o
+enquadramento e os acks do próprio transporte, nem retransmissão. **O tráfego real no fio é
+maior.** Toda citação de banda carrega essa frase, porque sem ela o número parece uma medida
+de rede quando é um piso.
+
+**Regra para as três candidatas:** quem não tiver como contar emite `-1` — que, pela regra do
+`-1`, é "não instrumentado" e nunca passa por zero. O que **não** pode é emitir número de
+banda sem contador por trás.
 
 **Por que `world_hash` é quantizado:** float não bate bit a bit entre instâncias, e não
 precisa. 0.01 u é uma ordem de grandeza abaixo do limiar de drift do briefing (0.15 u),

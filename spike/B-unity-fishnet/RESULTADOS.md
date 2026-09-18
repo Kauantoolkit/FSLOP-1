@@ -297,6 +297,44 @@ O gatilho de carga (`decisions/11`) é a viga carregada varrendo a pilha. Medido
 medida com a pilha dormindo, que é o caso barato. A intensidade tem dial
 (`-soakPatrolSteps`) e **não foi varrida** — a corrida de 600 s usou um único valor (200).
 
+## Banda — a métrica que não tinha número nenhum
+
+Medida desde 19/09 por um `Transport` que conta na passagem (`ByteCountingTugboat`,
+`changes/24`). Antes disso `rx/tx` saíam `-1`, porque o FishNet 4.7.3 não expõe contagem
+(`docs/99` 17).
+
+**O número do briefing** — *"banda por cliente: reporte média e pico em KB/s"* —, num soak de
+10 min com um cliente entrando aos 3 min, build de release, sem RTT injetado:
+
+```
+INFO  banda_por_cliente   id=1 rx 0.9/33.6 KBps (med/pico) tx 0.0/0.0
+```
+
+### A média sozinha engana, e o motivo é o cenário
+
+`0,9 KB/s` de média não descreve a stack: descreve **esta corrida**, em que a pilha passa 91%
+do tempo dormindo. O que transfere é o número **condicional**, e para isso `bodies_awake` está
+no contrato desde o início. Host, só nas amostras com cliente conectado:
+
+| estado da pilha | soak de 10 min | soak de 60 s |
+|---|---|---|
+| dormindo (`bodies_awake ≤ 1`) | `0,66` média / `22,07` pico | `1,20` média |
+| desabando (`121+` acordados) | **`23,94` média / `34,69` pico** | **`30,72` média / `53,42` pico** |
+
+As duas corridas concordam em ordem de grandeza quando comparadas na mesma faixa. **Não
+concordavam** quando eu incluí, por descuido, as amostras anteriores à conexão do cliente — o
+host não envia para ninguém, e aquilo puxava a média de `~24` para `3,15`. O erro era de
+método, não de medição.
+
+**`tx 0.0/0.0` no cliente está certo:** ele não tem personagem para controlar ainda, então não
+manda praticamente nada. Quando `input_ms_p99` existir, esse número deixa de ser zero.
+
+### A ressalva permanente
+
+São bytes de **payload** entregues ao transporte e recebidos dele. **Não** incluem cabeçalho
+UDP/IP (28 B por datagrama), enquadramento e acks do próprio Tugboat, nem retransmissão. **O
+tráfego real no fio é maior.** É um piso, e tem que ser citado como tal.
+
 ## O que esta stack ainda NÃO provou
 
 | métrica do briefing | estado |
@@ -306,7 +344,7 @@ medida com a pilha dormindo, que é o caso barato. A intensidade tem dial
 | não teleporta sob 150 ms / 3% | **FAIL** — teleporta em **3 de 4** corridas a 3% (`0,689`, `0,715`, `0,781 u` contra limiar `0,5`), no **cliente**. `docs/99` 21 |
 | resposta < 100 ms | **não medido** — exige personagem predito no cliente, que não existe |
 | drift < 0.15 u após 5 min | **FAIL**. Sem RTT: `0,67 u` / alinhado `0,020`. Sob 150 ms: `1,28 u` / alinhado `0,019` a 1% de perda, `0,35`–`0,39` a partir de 3%. `docs/99` 19 e 21 |
-| banda média e pico | **não medível nesta stack** — `rx/tx = -1`. FishNet 4.7.3 não expõe contagem de bytes (`docs/99` 17) |
+| banda média e pico | **PASS** (reportado) — cliente `0,9 / 33,6 KB/s` num soak de 10 min. Payload, não fio. Ver a seção abaixo |
 | late join | **PASS** — `151 de 151 corpo(s)` em `134.8 ms`, entrando aos 3 min |
 | queda de host limpa | **PASS** — `host_quit` do host, `shutdown clean=1 reason=host_lost` do cliente, zero exceção |
 | zero exceções em 10 min | **PASS**, com duas instâncias |

@@ -398,7 +398,26 @@ publicado. Depende da 2ª máquina (`decisions/01`), como o item 7.
 
 ## 17. O FishNet 4.7.3 não deixa contar bytes, e banda é campo do briefing
 
-**Estado:** aberto. Lacuna **da stack**, não do teste.
+**Estado:** **FECHADO em 19/09/2026** (`changes/24`). A saída prevista aqui — um `Transport`
+que conte na passagem — foi construída, e saiu mais barata do que este item estimava: o
+`Tugboat` **não é `sealed`** e os quatro pontos por onde o tráfego passa são `virtual` e
+públicos, então bastou **herdar e sobrescrever quatro métodos**, em vez de delegar ~20 membros
+abstratos num decorador.
+
+Primeiros números da métrica, corrida de 60 s com 2 instâncias:
+`rx 21,0 / 53,0 KB/s (média/pico)` no cliente — e a correlação que o contrato previa:
+**pilha dormindo `1,20 KB/s`, pilha acordada `29,58 KB/s`, 25× de diferença.**
+
+**A ressalva permanente, que viaja junto do número:** são bytes de **payload** entregues ao
+transporte e recebidos dele. **Não** incluem cabeçalho UDP/IP (28 B por datagrama), nem o
+enquadramento e os acks do próprio Tugboat, nem retransmissão. **O número no fio é maior.**
+Publicar isso como "banda" sem a ressalva seria publicar um piso vestido de medida.
+
+O texto abaixo é o registro do porquê o caminho fácil não existia, e continua válido.
+
+---
+
+**Estado original:** aberto. Lacuna **da stack**, não do teste.
 
 O briefing manda reportar banda média e pico por cliente; o contrato tem `rx_KBps` e
 `tx_KBps`. A candidata B **não consegue emitir os dois**, e isso foi lido na versão exata
