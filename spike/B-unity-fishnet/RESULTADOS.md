@@ -17,22 +17,23 @@ saída registrada em `tasks/FSLOP-1/changes/`.
 
 ## O veredito, em uma linha
 
-**A candidata B replica o mundo inteiro, entrega late join e queda de host limpos, e reprova o
-drift — em rede perfeita por latência, e sob a rede do briefing também por divergência.**
+**A candidata B replica o mundo inteiro e entrega late join e queda de host limpos. Em rede
+boa, o único problema é atraso. A partir de ~3% de perda, a viga teleporta no cliente — e isso
+é uma exigência literal do briefing que ela não cumpre.**
 
 Em rede local sem degradação, os **151 corpos** chegam ao cliente em 135 ms e o estado dele
-está correto: descontado o atraso, a divergência sobre o mundo inteiro é `0,065 u` contra o
-limiar de `0,15`. O que reprova é o cliente ficar **4 a 5 ticks atrás** (133–167 ms), pondo o
-erro visível em `0,67 u`.
+está correto: descontado o atraso, a divergência sobre o mundo inteiro é `0,020 u` contra o
+limiar de `0,15`. O que reprova o drift é o cliente ficar **~4,3 ticks atrás** (≈143 ms),
+pondo o erro visível em `0,67 u`.
 
-Sob os **150 ms e 3% que o briefing manda simular**, o atraso dobra (8 ticks, previsto antes de
-medir) e o erro visível vai a `1,28 u` — mas o que muda a leitura é outra coisa: o
-`drift_alinhado` sobe de `0,065` para **`0,1439 u`**, a 4% do limiar. Ou seja, sob perda o
-cliente **não está só atrasado: ele diverge**. Ver `docs/99` itens 19 e 21.
+Sob os **150 ms que o briefing manda simular**, o atraso dobra — previsto antes de medir — e o
+erro visível vai a `1,28 u`. Até **1% de perda** a divergência continua desprezível
+(`0,019 u`). A partir de **3%** ela salta para `0,35`–`0,39 u` **e a viga dá saltos de
+`0,689 u` e `0,743 u` no cliente**, acima do limiar de `0,5`. O efeito é **bimodal**: uma
+corrida a 3% não teve salto nenhum. Ver `docs/99` itens 19 e 21.
 
-**O que passa nas condições exatas do briefing:** o objeto carregado **não teleporta**
-(`0,072 u` contra `0,5`), o late join entrega os 151 corpos em `236,5 ms`, a queda do host
-encerra limpa e não há exceção em 10 min.
+**O que passa nas condições exatas do briefing:** o late join entrega os 151 corpos em
+`236,5 ms`, a queda do host encerra limpa e não há exceção em 10 min.
 
 ## Soak de 10 min com duas instâncias — saída real do avaliador
 
@@ -48,7 +49,7 @@ PASS  fps_host            100.00% das 659 amostras com fps>=60 e p99<=16.67ms (e
 INFO  banda_por_cliente   id=1 BANDA NAO INSTRUMENTADA (rx/tx vieram -1 ou ausentes)
 PASS  viga_nao_teleporta  maior salto 0.076 u (limite 0.50) em t=180.977 id=0 | 0 amostra(s) acima
 FAIL  resposta_do_input   nenhuma amostra de cliente com input_ms_p99 medido (ausente, ou -1 = nao instrumentado)
-FAIL  drift               pior id=1: drift_mesmo_ntick max 0.6736 u (obj=464 ntick=9016) p99 0.6133 u (limite 0.15) | alinhado 0.0647 u com atraso de 4 tick(s) | 151 corpo(s) e 64800 par(es) comparados, 1 cliente(s) acima do limite
+FAIL  drift               pior id=1: drift_mesmo_ntick max 0.6736 u (obj=464 ntick=9016) p99 0.6133 u (limite 0.15) | alinhado 0.0200 u com atraso de 4.3 tick(s) | 151 corpo(s) e 64800 par(es) comparados, 1 cliente(s) acima do limite
 PASS  late_join           1 late join(s), 151 de 151 corpo(s) em cada; pior elapsed 134.8 ms
 PASS  queda_do_host       1 de 1 cliente(s) encerraram com clean=1
 PASS  zero_excecoes       nenhuma linha ev=exception
@@ -73,7 +74,7 @@ Eventos reais dos dois logs, **inteiros**:
 
 | FAIL | é defeito da stack? | o que é |
 |---|---|---|
-| `drift` | **não** — é latência | estado certo nos 151 corpos (`alinhado 0.065`), atraso de 4 ticks. `p99 ≈ max` (0,61 contra 0,67) ⇒ é regime, não pico |
+| `drift` | **não** — é latência | estado certo nos 151 corpos (`alinhado 0,020`), atraso de 4,3 ticks. `p99 ≈ max` (0,61 contra 0,67) ⇒ é regime, não pico |
 | `resposta_do_input` | **não** — não instrumentado | exige personagem **predito** no cliente, que ainda não existe |
 
 O pior caso do drift é `obj=464` em `ntick=9016` — **13 ticks depois de o cliente conectar**
@@ -93,7 +94,7 @@ PASS  duracao             cobertura 659.2 s (minimo 600 s)
 PASS  relogio_coerente    client/1: 50.0 tick/s mediano; host/0: 50.0 tick/s mediano
 PASS  viga_nao_teleporta  maior salto 0.072 u (limite 0.50) em t=180.991 id=0 | 0 amostra(s) acima
 FAIL  resposta_do_input   nenhuma amostra de cliente com input_ms_p99 medido
-FAIL  drift               pior id=1: drift_mesmo_ntick max 1.2761 u (obj=0 ntick=19215) p99 1.1182 u (limite 0.15) | alinhado 0.1439 u com atraso de 8 tick(s) | 151 corpo(s) e 64800 par(es) comparados
+FAIL  drift               pior id=1: drift_mesmo_ntick max 1.2761 u (obj=0 ntick=19215) p99 1.1182 u (limite 0.15) | alinhado 0.0903 u com atraso de 8.4 tick(s) | 151 corpo(s) e 64800 par(es) comparados
 PASS  late_join           1 late join(s), 151 de 151 corpo(s) em cada; pior elapsed 236.5 ms
 PASS  queda_do_host       1 de 1 cliente(s) encerraram com clean=1
 PASS  zero_excecoes       nenhuma linha ev=exception
@@ -110,26 +111,38 @@ exigências:
 
 | exigência | estado |
 |---|---|
-| objeto carregado não teleporta | **PASS** — `0,072 u` contra o limiar de `0,5`, sob as condições exatas do briefing |
+| objeto carregado não teleporta | **FAIL** — `0,689 u` e `0,743 u` observados **no cliente**, contra o limiar de `0,5`. Ver a varredura abaixo |
 | personagem responde < 100 ms | **não medido** — exige personagem predito no cliente |
 
-### O achado que muda a leitura do drift
+> **Correção de 18/09.** Uma versão anterior deste arquivo dizia `PASS` nessa primeira linha,
+> com `0,072 u`. Dois erros: aquele número é do **host** (`id=0`), onde não há rede; e a única
+> corrida examinada era uma em que o salto não aconteceu. Para um requisito da forma *"não
+> teleporta"*, **uma ocorrência derruba e uma corrida limpa não prova nada** — eu estava lendo
+> a ausência de um evento raro como prova da impossibilidade dele.
 
-| | RTT 0, perda 0 | RTT 150 ms, perda 3% |
-|---|---|---|
-| `drift_mesmo_ntick` máx | `0,6736 u` | `1,2761 u` |
-| `drift_mesmo_ntick` p99 | `0,6133 u` | `1,1182 u` |
-| `drift_alinhado` | `0,0647 u` | **`0,1439 u`** |
-| atraso | 4 ticks | 8 ticks |
+### A varredura de perda, com RTT fixo em 150 ms
 
-O atraso dobrar era **previsto antes de medir** (150 ms ÷ 33 ms por tick ≈ 4,5 somados aos 4
-existentes; previsto "8 a 9", medido 8).
+Corridas de 400 s com o cliente entrando aos 100 s, mais a de 10 min a 3% para comparação.
+Todos os números com **alinhamento sub-tick** (`changes/22`).
 
-O que **não** estava previsto é o `drift_alinhado`: **2,2× maior**, e a `0,1439` ele está a 4%
-do limiar. Isso é divergência de verdade, não atraso — é o que 3% de perda faz com um cliente
-que só interpola e não reconcilia. Detalhe e ressalvas em `docs/99` item 21; em resumo: é
-**uma** corrida, precisa de repetição e de uma varredura de perda para saber onde a fronteira
-está.
+| perda | `drift_alinhado` | atraso | maior salto da viga **no cliente** |
+|---|---|---|---|
+| 0% | `0,0180 u` | 7,9 t | dentro do limite |
+| 1% | `0,0191 u` | 7,5 t | dentro do limite |
+| **3%** (400 s) | **`0,3541 u`** | 7,6 t | **`0,689 u` — REPROVA** |
+| **5%** (400 s) | **`0,3857 u`** | 8,1 t | **`0,743 u` — REPROVA** |
+| 3% (10 min) | `0,0903 u` | 8,4 t | dentro do limite |
+
+**O efeito é bimodal, não uma rampa.** A 3% houve uma corrida com `0,354` e teleporte e outra
+com `0,090` e nenhum. A perda é sorteada, e o que provavelmente produz o salto é uma **rajada**
+de pacotes perdidos, não a taxa média — ou seja, **a taxa sozinha não prevê o comportamento**.
+
+**Até 1% de perda, a divergência é desprezível** (`0,018`–`0,019 u`, contra o limiar de `0,15`).
+A fronteira está entre 1% e 3%, com **um ponto de cada lado** e um contraexemplo dentro do 3%.
+Detalhe e o que falta saber em `docs/99` item 21.
+
+**O atraso dobrar era previsto antes de medir** — 150 ms ÷ 33 ms por tick ≈ 4,5 somados aos
+~4,3 sem injeção; previsto "8 a 9", medido 7,5 a 8,4.
 
 ### Reprodução
 
@@ -141,12 +154,18 @@ Três corridas independentes de 10 min, em builds diferentes:
 | corpos comparados | 1 | 1 | **151** |
 | `drift_mesmo_ntick` max | `0.7185 u` | `0.6824 u` | `0.6736 u` |
 | `drift_mesmo_ntick` p99 | `0.6820 u` | `0.6498 u` | `0.6133 u` |
-| `drift_alinhado` | `0.0769 u` | `0.0691 u` | `0.0647 u` |
-| atraso | `5 ticks` | `4 ticks` | `4 ticks` |
+| `drift_alinhado` | `0,0181 u` | `0,0205 u` | `0,0200 u` |
+| atraso | `4,6 t` | `4,4 t` | `4,3 t` |
 | pares comparados | 10 653 | 10 801 | **64 800** |
 
-Mesmo regime nas três. O atraso oscila entre 4 e 5 ticks (133–167 ms a 30 Hz), e é assim que
-ele deve ser citado — **não** como "4" nem como "5".
+Mesmo regime nas três: resíduo de `0,018`–`0,020 u` e atraso de `4,3`–`4,6` ticks (143–153 ms
+a 30 Hz).
+
+> **Os três `drift_alinhado` acima foram recalculados em 18/09** com alinhamento sub-tick
+> (`changes/22`). Com alinhamento por tick inteiro eles davam `0,0769` / `0,0691` / `0,0647` —
+> e **a variação entre eles era artefato**, só refletia onde a parte fracionária do atraso
+> caía. O resíduo real é praticamente o mesmo nas três, que é o que se esperava de três
+> corridas nas mesmas condições.
 
 ## Soak de 600 s, instância única — saída real do avaliador
 
@@ -215,9 +234,9 @@ medida com a pilha dormindo, que é o caso barato. A intensidade tem dial
 |---|---|
 | fps ≥ 60 no host | **PASS**, com a ressalva da diluição acima |
 | viga não teleporta | **PASS** com rede real (`0.069`), local (`0.209`) e por modelo (`0.208`) |
-| não teleporta sob 150 ms / 3% | **PASS** — `0,072 u` contra limiar `0,5`, nas condições exatas do briefing |
+| não teleporta sob 150 ms / 3% | **FAIL** — `0,689 u` e `0,743 u` no **cliente**, contra limiar `0,5`. Bimodal: uma corrida a 3% não teve salto. `docs/99` 21 |
 | resposta < 100 ms | **não medido** — exige personagem predito no cliente, que não existe |
-| drift < 0.15 u após 5 min | **FAIL**. Sem RTT: `0,67 u` / alinhado `0,065`. Sob 150 ms e 3%: `1,28 u` / alinhado `0,144`. Ver `docs/99` 19 e 21 |
+| drift < 0.15 u após 5 min | **FAIL**. Sem RTT: `0,67 u` / alinhado `0,020`. Sob 150 ms: `1,28 u` / alinhado `0,019` a 1% de perda, `0,35`–`0,39` a partir de 3%. `docs/99` 19 e 21 |
 | banda média e pico | **não medível nesta stack** — `rx/tx = -1`. FishNet 4.7.3 não expõe contagem de bytes (`docs/99` 17) |
 | late join | **PASS** — `151 de 151 corpo(s)` em `134.8 ms`, entrando aos 3 min |
 | queda de host limpa | **PASS** — `host_quit` do host, `shutdown clean=1 reason=host_lost` do cliente, zero exceção |

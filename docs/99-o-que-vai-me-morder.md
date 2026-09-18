@@ -560,40 +560,71 @@ precisa dizer de qual veio cada linha.
 **Sai daqui quando:** o `SpikePlayerBuilder` souber construir as duas, o `[SOAK-META]` carregar
 qual é, e existir uma corrida sob 150 ms / 3% com número publicado.
 
-## 21. Com 3% de perda, o cliente deixa de estar só atrasado e passa a divergir
 
-**Estado:** aberto, e é o número que muda a leitura do item 19.
+## 21. A partir de ~3% de perda, a viga TELEPORTA no cliente — e o efeito é bimodal
 
-Até 18/09 a conclusão sobre drift era confortável: *"o estado do cliente está certo, o que
-reprova é latência"*. Ela vinha de `drift_alinhado = 0,065 u` contra o limiar de `0,15` — ou
-seja, descontado o atraso, sobrava quase nada.
+**Estado:** aberto. É o achado mais forte contra a abordagem atual, e **reprova uma exigência
+literal do briefing**.
 
-**Essa medição era com RTT zero e perda zero.** Sob as condições que o briefing manda simular:
+### Este item foi escrito errado uma vez, em 18/09, e a correção é parte dele
 
-| | RTT 0, perda 0 | **RTT 150 ms, perda 3%** |
-|---|---|---|
-| `drift_mesmo_ntick` máx | `0,6736 u` | **`1,2761 u`** |
-| `drift_mesmo_ntick` p99 | `0,6133 u` | **`1,1182 u`** |
-| `drift_alinhado` | `0,0647 u` | **`0,1439 u`** |
-| atraso | 4 ticks | **8 ticks** |
+A primeira versão dizia *"com 3% de perda o cliente deixa de estar só atrasado e passa a
+divergir"*, com o `drift_alinhado` indo de `0,0647` a `0,1439` — 2,2×. **Dois erros:**
 
-O atraso dobrar era esperado e foi **previsto antes da medição** (150 ms ÷ 33 ms por tick ≈
-4,5 ticks somados aos 4 existentes). O que **não** estava previsto é o `drift_alinhado`:
-`0,0647` → `0,1439`, **2,2× maior**.
+1. **confusão de variável:** `0,0647` era com RTT **zero** e `0,1439` com RTT **150 ms**.
+   Atrasos diferentes, partes fracionárias diferentes. A diferença não era atribuível à perda;
+2. **artefato de instrumento:** o alinhamento só testava deslocamentos **inteiros** de tick, e
+   o atraso real não cai em tick redondo. A parte fracionária sobrava no resultado e era lida
+   como divergência. Com alinhamento sub-tick (`changes/22`), `0,0317` → `0,0180` a 0% de
+   perda e `0,0876` → `0,0191` a 1%. O crescimento que eu tinha publicado **era quase todo
+   artefato**.
 
-Isso é divergência de verdade, não atraso — é o que a perda de pacote faz com um cliente que
-só interpola e não reconcilia. E `0,1439` está a **4% do limiar de 0,15**. Com 4% de perda em
-vez de 3%, provavelmente passa.
+O número era plausível e crescia de forma monotônica — o disfarce exato que a regra 48.9
+descreve. O que o denunciou não foi um absurdo: foi **uma incoerência entre duas medições
+minhas** (rede pior dando erro menor).
 
-**Por que isto importa mais que o item 19:** lá o problema era da métrica (um limiar apertado
-demais para qualquer replicação interpolada). Aqui o problema é da **abordagem**: um cliente
-sem reconciliação acumula erro sob perda, e a margem que sobra é fina. O item 19 se resolve
-mexendo no limiar ou na velocidade; este não.
+### O que a varredura controlada mostra
 
-**Ressalva honesta:** é **uma** corrida. `p99` próximo do máximo diz que não é pico isolado,
-mas 2,2× a partir de uma amostra só é tendência, não constante. Precisa de repetição, e de uma
-varredura de perda (1%, 3%, 5%) para saber onde o `drift_alinhado` cruza 0,15.
+RTT fixo em **150 ms**, perda variando, alinhamento sub-tick. Corridas de 400 s com o cliente
+entrando aos 100 s, mais a corrida de 10 min a 3% para comparação:
 
-**Sai daqui quando:** a varredura de perda existir e disser onde está a fronteira — e, se ela
-estiver perto de 3%, a decisão de reconciliar ou não vira pergunta de arquitetura, não de
-ajuste.
+| perda | `drift_alinhado` | atraso | maior salto da viga **no cliente** |
+|---|---|---|---|
+| 0% | `0,0180 u` | 7,9 t | dentro do limite |
+| 1% | `0,0191 u` | 7,5 t | dentro do limite |
+| **3%** (400 s) | **`0,3541 u`** | 7,6 t | **`0,689 u` — REPROVA (limite 0,5)** |
+| **5%** (400 s) | **`0,3857 u`** | 8,1 t | **`0,743 u` — REPROVA** |
+| 3% (10 min) | `0,0903 u` | 8,4 t | dentro do limite |
+
+**Duas leituras, e as duas importam:**
+
+**1. O briefing exige, literalmente, que o objeto carregado não teleporte sob 150 ms e 3%.
+Ele teleporta.** `0,689 u` e `0,743 u` contra o limiar de `0,5`, no **cliente** — o host nunca
+passa de `0,08`, porque no host não há rede, há física.
+
+**2. O efeito é BIMODAL, não uma rampa.** A 3% houve uma corrida com `0,354` e teleporte, e
+outra com `0,090` e nenhum. A perda é sorteada; o que produz o salto é provavelmente uma
+**rajada** de pacotes perdidos, não a taxa média. Isso significa que **a taxa de perda sozinha
+não prevê o comportamento** — e que uma corrida limpa a 3% não é evidência de nada.
+
+### A assimetria que decide a leitura
+
+Para um requisito da forma *"não teleporta"*, **uma ocorrência observada derruba; uma corrida
+sem ocorrência não prova nada**. Foi assim que eu publiquei um `PASS` errado: a corrida de
+10 min a 3% não teve o salto, e eu escrevi "objeto carregado não teleporta: PASS". Estava
+lendo a ausência de um evento raro como prova da impossibilidade dele.
+
+### O que ainda não se sabe
+
+- **a fronteira está entre 1% e 3%**, e com apenas um ponto em cada lado. Falta 2%, e falta
+  repetir cada ponto — 3% já mostrou dois resultados opostos em duas corridas;
+- **por que o salto acontece.** A hipótese é rajada de perda esvaziando a fila de
+  interpolação, seguida de um `MoveTowards` que cobre a distância acumulada num quadro. Não
+  foi verificada no código nem no log;
+- **se reconciliação resolveria.** É a diferença entre isto e o item 19: lá o problema é da
+  métrica; aqui é da abordagem — cliente que só interpola não tem como se recuperar de uma
+  rajada sem saltar.
+
+**Sai daqui quando:** houver repetição suficiente para dizer com que frequência o salto ocorre
+a 3%, e a causa estiver explicada linha a linha. Só então "mudar a abordagem" vira pergunta
+com fundamento para o usuário.
