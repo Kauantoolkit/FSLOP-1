@@ -52,3 +52,9 @@ desktop.ini
 .DS_Store
 Player.log
 Player-prev.log
+
+# Log do Unity em batchmode (gerador de cena e build do player). O Windows mantem
+# handle aberto nele por um tempo depois do processo sair, entao ele nem sempre pode
+# ser apagado — mas nunca deve entrar no repositorio: e saida de execucao, e a regra
+# de saida de execucao ja esta la em cima.
+build-*.log

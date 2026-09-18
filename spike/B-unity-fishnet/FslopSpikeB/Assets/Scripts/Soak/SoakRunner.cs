@@ -80,6 +80,7 @@ namespace Fslop.SpikeB
 
         int excecoes;
         bool encerrando;
+        float inicioDoLateJoin;
 
         void Awake()
         {
@@ -122,7 +123,7 @@ namespace Fslop.SpikeB
             // numero sairia, e nao significaria nada.
             if (!SouServidor)
             {
-                Evento("spawn_done", "bodies=0 nota=cliente_nao_simula");
+                PrepararCliente();
                 return;
             }
 
@@ -132,14 +133,113 @@ namespace Fslop.SpikeB
                 sondas.AddRange(pilha.Spawn());
             }
 
-            viga = FindAnyObjectByType<CarryBeam>();
-            if (viga != null)
+            // A viga NAO e procurada aqui, nem no host. Desde que ela virou objeto de cena
+            // em rede valido (changes/12), o proprio FishNet a DESATIVA no Start dela —
+            // NetworkObject.cs:584, TryStartDeactivation, que roda enquanto o servidor
+            // ainda nao subiu. Quem a reativa e ServerObjects.cs:523, e isso acontece
+            // depois deste Start. Procurar aqui devolvia null e o spawn_done saia com 150
+            // corpos em vez de 151, sem nenhum erro no log. Resolvida em Update, nos dois
+            // papeis; o spawn_done do host sai junto, para nunca descrever mundo incompleto.
+        }
+
+        /// <summary>
+        /// O cliente nao simula: ele recebe. A viga existe na cena dele tambem (e objeto de
+        /// cena em rede), e o Rigidbody dela PRECISA virar kinematic — senao o PhysX local
+        /// puxa a viga para baixo enquanto o NetworkTransform a puxa para a posicao do
+        /// servidor, e o que se mediria seria a briga entre os dois, nao a replicacao.
+        ///
+        /// A capsula do jogador e os portadores tambem ficam parados no cliente: eles nao
+        /// sao replicados ainda, e deixa-los cair produziria movimento local que nao veio
+        /// de lugar nenhum.
+        /// </summary>
+        void PrepararCliente()
+        {
+            int congelados = CongelarCorposLocais();
+
+            // A viga NAO e procurada aqui. O FishNet mantem objeto de cena em rede
+            // DESATIVADO no cliente ate o servidor mandar o spawn, e FindAnyObjectByType
+            // ignora inativos — procurar no Start devolve null sempre. Ela e resolvida em
+            // Update, e o tempo ate aparecer e justamente o que late_join_done mede.
+            Evento("late_join_begin", string.Format(CultureInfo.InvariantCulture,
+                "at_t={0:F3} corpos_congelados={1}", Decorrido(), congelados));
+
+            inicioDoLateJoin = Decorrido();
+        }
+
+        /// <summary>
+        /// Corpos locais do cliente viram kinematic. Sem isso o PhysX local puxa a viga para
+        /// baixo enquanto o NetworkTransform a puxa para a posicao do servidor, e o que se
+        /// mediria seria a briga entre os dois em vez da replicacao.
+        /// </summary>
+        int CongelarCorposLocais()
+        {
+            int congelados = 0;
+
+            foreach (var corpo in FindObjectsByType<Rigidbody>())
             {
-                sondas.Add(viga.Body);
-                MontarPortadores();
+                if (!corpo.isKinematic)
+                {
+                    corpo.isKinematic = true;
+                    congelados++;
+                }
             }
 
+            return congelados;
+        }
+
+        /// <summary>
+        /// Tenta achar a viga no host. Ela nao esta pronta no Start: o FishNet desativa
+        /// objeto de cena em rede enquanto o servidor nao subiu (NetworkObject.cs:584) e so
+        /// a reativa ao registra-la (ServerObjects.cs:523). Devolve true no quadro em que
+        /// ela aparece, e e so ai que o mundo do host esta completo — por isso o spawn_done
+        /// sai daqui, e nao do Start.
+        /// </summary>
+        bool ResolverVigaLocal()
+        {
+            var achada = FindAnyObjectByType<CarryBeam>();
+            if (achada == null)
+            {
+                return false;
+            }
+
+            viga = achada;
+
+            // No host a viga simula: nada de kinematic. O briefing e explicito em "fisica
+            // simula SO no host".
+            sondas.Add(viga.Body);
+            MontarPortadores();
+
             Evento("spawn_done", "bodies=" + sondas.Count);
+
+            return true;
+        }
+
+        /// <summary>
+        /// Tenta achar a viga replicada. Devolve true no quadro em que ela aparece.
+        /// </summary>
+        bool ResolverVigaReplicada()
+        {
+            var achada = FindAnyObjectByType<CarryBeam>();
+            if (achada == null)
+            {
+                return false;
+            }
+
+            viga = achada;
+            viga.Body.isKinematic = true;
+
+            // A viga entra nas sondas do cliente: e o unico corpo replicado, entao e sobre
+            // ela que world_hash e carry_jump_u do cliente falam. O hash do cliente NAO vai
+            // bater com o do host enquanto as 150 caixas nao forem replicadas — o host
+            // descreve 151 corpos e o cliente 1. O avaliador vai reprovar late_join por
+            // causa disso, e vai estar CERTO: o estado do cliente nao esta completo.
+            sondas.Add(viga.Body);
+
+            Evento("late_join_done", string.Format(CultureInfo.InvariantCulture,
+                "elapsed_ms={0:F1} world_hash={1} bodies={2}",
+                (Decorrido() - inicioDoLateJoin) * 1000f, HashDoMundo(), sondas.Count));
+
+            return true;
         }
 
         /// <summary>
@@ -159,6 +259,7 @@ namespace Fslop.SpikeB
             transporte.SetClientAddress(endereco);
 
             rede.ServerManager.OnRemoteConnectionState += AoMudarEstadoDoPar;
+            rede.ServerManager.OnAuthenticationResult += AoAutenticar;
             rede.ClientManager.OnClientConnectionState += AoMudarEstadoDoCliente;
 
             if (SouServidor)
@@ -173,6 +274,25 @@ namespace Fslop.SpikeB
             Evento("transport_up", string.Format(CultureInfo.InvariantCulture,
                 "papel={0} transporte={1} endereco={2} porta={3}",
                 papel, transporte.GetType().Name, endereco, porta));
+        }
+
+        /// <summary>
+        /// Objeto de CENA em rede so vai para o cliente que for observador daquela cena, e
+        /// o cliente nao entra nela sozinho: quem inscreve e o servidor, com
+        /// SceneManager.AddConnectionToScene. Sem esta chamada o cliente conecta, autentica
+        /// e nunca ve objeto nenhum — foi exatamente o que aconteceu na 1a corrida, com o
+        /// cliente emitindo world_hash de conjunto vazio por 28 s.
+        /// </summary>
+        void AoAutenticar(NetworkConnection conexao, bool autenticado)
+        {
+            if (!autenticado)
+            {
+                return;
+            }
+
+            rede.SceneManager.AddConnectionToScene(conexao, gameObject.scene);
+            Evento("peer_authenticated", string.Format(CultureInfo.InvariantCulture,
+                "conn={0} cena={1}", conexao.ClientId, gameObject.scene.name));
         }
 
         /// <summary>Lado servidor: um par entrou ou saiu.</summary>
@@ -289,6 +409,21 @@ namespace Fslop.SpikeB
 
         void Update()
         {
+            // A viga esta desativada na cena ate o FishNet registra-la, nos DOIS papeis: no
+            // cliente ate o spawn vindo do servidor, no host ate o servidor subir. Por isso
+            // a busca fica aqui, e nao no Start.
+            if (viga == null)
+            {
+                if (SouServidor)
+                {
+                    ResolverVigaLocal();
+                }
+                else
+                {
+                    ResolverVigaReplicada();
+                }
+            }
+
             float dtMs = Time.unscaledDeltaTime * 1000f;
             quadrosMs.Add(dtMs);
             quadrosNoSegundo++;

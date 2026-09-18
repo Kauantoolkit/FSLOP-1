@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -22,6 +23,8 @@ namespace Fslop.SpikeB.EditorTools
         public const string ScenePath = SceneFolder + "/SpikeB.unity";
 
         public const string PhysicsFolder = "Assets/Physics";
+        public const string NetworkFolder = "Assets/Network";
+        public const string PrefabCollectionPath = NetworkFolder + "/SpikePrefabs.asset";
         public const string PlayerMaterialPath = PhysicsFolder + "/PlayerFrictionless.asset";
 
         public const string GroundName = "Ground";
@@ -65,6 +68,8 @@ namespace Fslop.SpikeB.EditorTools
                 AssetDatabase.CreateFolder("Assets", "Scenes");
             }
 
+            AtribuirIdsDeCena(scene);
+
             if (!EditorSceneManager.SaveScene(scene, ScenePath))
             {
                 throw new System.Exception("[BUILDER] SaveScene falhou para " + ScenePath);
@@ -78,6 +83,102 @@ namespace Fslop.SpikeB.EditorTools
             Log("cena escrita em " + ScenePath);
             Log("raizes=" + scene.rootCount);
             Log("material do player=" + PlayerMaterialPath);
+        }
+
+        /// <summary>
+        /// Grava o id de cena de cada NetworkObject ANTES de salvar o .unity.
+        ///
+        /// Por que isto existe (errors/06 da task): o FishNet gera esse id sozinho, pelo
+        /// OnValidate do NetworkObject, mas lido em NetworkObject.Serialized.cs:167 ele
+        /// desiste quando `gameObject.scene.name` esta vazio — e a cena criada por
+        /// EditorSceneManager.NewScene so ganha nome quando e salva. Ou seja: no momento
+        /// do AddComponent a cena ainda nao tem nome, o FishNet conclui "isto nao e objeto
+        /// de cena" e ZERA o id. O SaveScene depois grava o zero. No player, o
+        /// NetworkObject.cs:392 encontra SceneId == 0 e recusa inicializar o objeto — foi
+        /// assim que a viga sumiu das duas pontas.
+        ///
+        /// O utilitario oficial (menu Fish-Networking > Utility > Reserialize
+        /// NetworkObjects) nao serve aqui: ReserializeNetworkObjectsEditor.cs:64 e
+        /// `internal`, invisivel para este assembly. A porta publica e
+        /// NetworkObject.Serialized.cs:37, `public void SetSceneId(ulong)`.
+        ///
+        /// O id nao precisa ser o que o FishNet sortearia; precisa ser NAO-ZERO, unico
+        /// dentro da cena e IGUAL nos dois processos. Como host e cliente carregam o mesmo
+        /// arquivo de cena, qualquer valor gravado serve. Deterministico de proposito: o
+        /// .unity e versionado e nao pode mudar de diff a cada regeracao — o sorteio do
+        /// FishNet (Serialized.cs:138, System.Random) mudaria.
+        /// </summary>
+        static void AtribuirIdsDeCena(UnityEngine.SceneManagement.Scene scene)
+        {
+            var atribuidos = new Dictionary<ulong, string>();
+
+            foreach (var raiz in scene.GetRootGameObjects())
+            {
+                // includeInactive: true — objeto de cena em rede fica desativado no cliente
+                // ate o spawn, e um dia isso vai valer tambem no arquivo salvo.
+                foreach (var nob in raiz.GetComponentsInChildren<FishNet.Object.NetworkObject>(true))
+                {
+                    string caminho = CaminhoNaHierarquia(nob.transform);
+                    ulong id = Fnv1a32(caminho);
+
+                    // Zero e o valor "nao atribuido" (NetworkObject.cs:360). Se o hash cair
+                    // nele, o objeto ficaria invisivel de novo — e em silencio.
+                    if (id == 0UL)
+                    {
+                        id = 1UL;
+                    }
+
+                    if (atribuidos.TryGetValue(id, out string jaUsadoPor))
+                    {
+                        throw new System.Exception(string.Format(CultureInfo.InvariantCulture,
+                            "[BUILDER] colisao de id de cena entre '{0}' e '{1}' (id={2}). " +
+                            "Renomeie um dos dois: o id vem do caminho na hierarquia.",
+                            jaUsadoPor, caminho, id));
+                    }
+
+                    atribuidos.Add(id, caminho);
+
+                    nob.SetSceneId(id);
+                    EditorUtility.SetDirty(nob);
+
+                    Log(string.Format(CultureInfo.InvariantCulture,
+                        "id de cena {0} = {1}", caminho, id));
+                }
+            }
+
+            if (atribuidos.Count == 0)
+            {
+                throw new System.Exception(
+                    "[BUILDER] nenhum NetworkObject na cena. A viga deveria ter um " +
+                    "(CreateBeam) — sem ele nao ha o que replicar e o soak mede o vazio.");
+            }
+        }
+
+        static string CaminhoNaHierarquia(Transform t)
+        {
+            string caminho = t.name;
+            for (Transform p = t.parent; p != null; p = p.parent)
+            {
+                caminho = p.name + "/" + caminho;
+            }
+
+            return caminho;
+        }
+
+        /// <summary>
+        /// FNV-1a 32 bits. Mesma funcao que o SoakRunner usa para o world_hash, pelo mesmo
+        /// motivo: e curta o bastante para eu conferir a mao e nao depende de biblioteca.
+        /// </summary>
+        static ulong Fnv1a32(string texto)
+        {
+            uint hash = 2166136261u;
+            foreach (char c in texto)
+            {
+                hash ^= c;
+                hash *= 16777619u;
+            }
+
+            return hash;
         }
 
         /// <summary>
@@ -192,6 +293,15 @@ namespace Fslop.SpikeB.EditorTools
             body.interpolation = RigidbodyInterpolation.Interpolate;
 
             go.AddComponent<CarryBeam>();
+
+            // A viga e um objeto de CENA em rede, nao um prefab spawnado: as duas instancias
+            // carregam a mesma cena, e o FishNet casa objetos de cena por id. Sem dono, quem
+            // escreve o transform e o servidor — lido em NetworkTransform.cs:1100, onde
+            // `canSet` inclui (IsServerInitialized && _clientAuthoritative && !Owner.IsValid).
+            go.AddComponent<FishNet.Object.NetworkObject>();
+
+            var sync = go.AddComponent<FishNet.Component.Transforming.NetworkTransform>();
+            sync.SetSynchronizeScale(false);   // a viga nao muda de escala; byte a menos por pacote
         }
 
         /// <summary>
@@ -207,7 +317,31 @@ namespace Fslop.SpikeB.EditorTools
         static void CreateNetwork()
         {
             var go = new GameObject(NetworkName);
-            go.AddComponent<FishNet.Managing.NetworkManager>();
+            var manager = go.AddComponent<FishNet.Managing.NetworkManager>();
+
+            // SpawnablePrefabs nao pode ficar nulo: NetworkManager.ValidateSpawnablePrefabs
+            // aborta a inicializacao. No Editor ele se vira sozinho buscando o
+            // DefaultPrefabObjects, mas isso nao acontece num player — e o player e onde o
+            // soak roda. A colecao entra vazia de propósito: a viga e objeto de CENA, nao
+            // prefab, e nada e spawnado por instanciacao ainda.
+            manager.SpawnablePrefabs = CreatePrefabCollection();
+        }
+
+        static FishNet.Managing.Object.PrefabObjects CreatePrefabCollection()
+        {
+            if (!AssetDatabase.IsValidFolder(NetworkFolder))
+            {
+                AssetDatabase.CreateFolder("Assets", "Network");
+            }
+
+            var colecao = ScriptableObject.CreateInstance<FishNet.Managing.Object.SinglePrefabObjects>();
+
+            AssetDatabase.DeleteAsset(PrefabCollectionPath);
+            AssetDatabase.CreateAsset(colecao, PrefabCollectionPath);
+            AssetDatabase.SaveAssets();
+
+            return AssetDatabase.LoadAssetAtPath<FishNet.Managing.Object.SinglePrefabObjects>(
+                PrefabCollectionPath);
         }
 
         /// <summary>
