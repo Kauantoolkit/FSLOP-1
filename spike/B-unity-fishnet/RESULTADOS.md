@@ -8,8 +8,8 @@ saída registrada em `tasks/FSLOP-1/changes/`.
 | | |
 |---|---|
 | Repositório | `projects/FSLOP-1`, branch `main` |
-| Build medida | `4333f7b` |
-| Data | 17/09/2026 |
+| Build medida | `55745ae` (a seção de rede) · `4333f7b` (a seção de instância única) |
+| Data | 18/09/2026 (rede) · 17/09/2026 (instância única) |
 | Engine | Unity `6000.6.0f1` |
 | FishNet | `4.7.3` · Steamworks.NET `2025.164.1` · FishySteamworks `4.1.1` |
 | Máquina | Ryzen 5 5600 (6C/12T) · 15,9 GB · RTX 3060 (12113 MB, lido do log do player) · Windows 11 |
@@ -17,10 +17,73 @@ saída registrada em `tasks/FSLOP-1/changes/`.
 
 ## O veredito, em uma linha
 
-**A candidata B passa em tudo que uma corrida de uma instância pode provar, e não provou
-nada de rede.** O soak de 10 min fecha fps, teleporte da viga, coerência de relógio e zero
-exceções. Drift, `input_ms_p99`, late join e queda de host **exigem uma segunda instância
-que ainda não existe**.
+**A candidata B replica, replica certo, e replica atrasada demais para a métrica do briefing.**
+Com duas instâncias e um soak de 10 min, o estado do cliente está correto — descontado o
+atraso, a divergência é `0,069 u` contra o limiar de `0,15` — mas o cliente fica
+**permanentemente 4 a 5 ticks de rede atrás** (133–167 ms), o que põe o erro de posição
+visível em `0,68 u`. **Reprova o drift por latência, não por estado errado.** Ver
+`docs/99-o-que-vai-me-morder.md` item 19: a conta sugere que esse limiar pode não caber em
+stack nenhuma nesta velocidade de objeto, e isso só se confirma medindo A e C.
+
+## Soak de 10 min com duas instâncias — saída real do avaliador
+
+Host 660 s; cliente entrando aos **180 s** (o late join de 3 min do briefing) e saindo junto
+com o host. Tugboat local, **zero RTT injetado**. Build `55745ae`, `display=local`.
+
+```
+PASS  integridade         2 arquivos, 1138 amostras, 13 eventos, 34190 posicoes, 24053 linha(s) fora do contrato
+INFO  procedencia         transporte=local rtt_injetado=0ms perda_injetada=0.0% build=55745ae  <<< transporte LOCAL: estes numeros NAO valem como 'sobre o relay da Steam'
+PASS  duracao             cobertura 659.2 s (minimo 600 s) = span 658.3 + 1 intervalo de 0.98 s
+PASS  relogio_coerente    client/1: 50.0 tick/s mediano; host/0: 50.0 tick/s mediano
+PASS  fps_host            100.00% das 659 amostras com fps>=60 e p99<=16.67ms (exigido 99%)
+INFO  banda_por_cliente   id=1 BANDA NAO INSTRUMENTADA (rx/tx vieram -1 ou ausentes)
+PASS  viga_nao_teleporta  maior salto 0.069 u (limite 0.50) em t=180.994 id=0 | 0 amostra(s) acima
+FAIL  resposta_do_input   nenhuma amostra de cliente com input_ms_p99 medido (ausente, ou -1 = nao instrumentado)
+FAIL  drift               pior id=1: drift_mesmo_ntick max 0.6824 u p99 0.6498 u (limite 0.15) | alinhado 0.0691 u com atraso de 4 tick(s) | 10801 par(es) de ntick comparados, 1 cliente(s) acima do limite
+FAIL  late_join           id=1 recebeu 1 de 151 corpo(s) - estado INCOMPLETO
+PASS  queda_do_host       1 de 1 cliente(s) encerraram com clean=1
+PASS  zero_excecoes       nenhuma linha ev=exception
+```
+
+Eventos reais dos dois logs, **inteiros**:
+
+```
+[SOAK-EV] t=0.164   tick=1     role=host   id=0 ev=spawn_done bodies=151
+[SOAK-EV] t=180.239 tick=9005  role=host   id=0 ev=peer_connected conn=0
+[SOAK-EV] t=180.281 tick=9007  role=host   id=0 ev=peer_authenticated conn=0 cena=SpikeB
+[SOAK-EV] t=660.002 tick=32993 role=host   id=0 ev=host_quit motivo=duracao_atingida
+[SOAK-EV] t=660.002 tick=32993 role=host   id=0 ev=shutdown clean=1 reason=duracao_atingida excecoes=0
+
+[SOAK-EV] t=0.111   tick=0     role=client id=1 ev=late_join_begin at_t=0.111 corpos_congelados=1
+[SOAK-EV] t=0.237   tick=5     role=client id=1 ev=late_join_done elapsed_ms=125.0 ntick=5408 world_hash=3fcf56ba bodies=1
+[SOAK-EV] t=479.924 tick=23991 role=client id=1 ev=peer_disconnected conn=eu
+[SOAK-EV] t=479.925 tick=23991 role=client id=1 ev=shutdown clean=1 reason=host_lost excecoes=0
+```
+
+### Os três FAIL, um a um
+
+| FAIL | é defeito da stack? | o que é |
+|---|---|---|
+| `drift` | **não** — é latência | estado certo (`alinhado 0.069`), atraso de 4 ticks. `p99 ≈ max` ⇒ é regime, não pico |
+| `late_join` | **não** — é escopo | só a viga replica hoje; as 150 caixas não. A mensagem diz exatamente isso: `recebeu 1 de 151` |
+| `resposta_do_input` | **não** — não instrumentado | exige personagem predito no cliente, que ainda não existe |
+
+### Reprodução
+
+Duas corridas independentes de 10 min, builds `95b7678` e `55745ae`:
+
+| | corrida 1 | corrida 2 |
+|---|---|---|
+| `drift_mesmo_ntick` max | `0.7185 u` | `0.6824 u` |
+| `drift_mesmo_ntick` p99 | `0.6820 u` | `0.6498 u` |
+| `drift_alinhado` | `0.0769 u` | `0.0691 u` |
+| atraso | `5 ticks` | `4 ticks` |
+| pares comparados | 10 653 | 10 801 |
+
+Mesmo regime nas duas. O atraso oscila entre 4 e 5 ticks (133–167 ms a 30 Hz), e é assim que
+ele deve ser citado — não como "5".
+
+## Soak de 600 s, instância única — saída real do avaliador
 
 ## Soak de 600 s — saída real do avaliador
 
@@ -41,9 +104,10 @@ PASS  zero_excecoes       nenhuma linha ev=exception
 RESULTADO: FAIL - resposta_do_input, drift, late_join, queda_do_host
 ```
 
-**Os quatro FAIL são todos a mesma coisa: não há cliente.** Não são defeitos da stack; são
-a forma do buraco que falta preencher, e o buraco depende do transporte
-(`docs/99-o-que-vai-me-morder.md` item 7).
+**Os quatro FAIL são todos a mesma coisa: não há cliente.** Esta corrida é de 17/09 e está
+mantida por ser a única medição longa de **instância única** — é a linha de base de fps. Os
+quatro FAIL dela foram desde então respondidos pela corrida de duas instâncias acima, exceto
+`resposta_do_input`.
 
 ## Série do soak — 600 amostras
 
@@ -85,17 +149,22 @@ medida com a pilha dormindo, que é o caso barato. A intensidade tem dial
 | métrica do briefing | estado |
 |---|---|
 | fps ≥ 60 no host | **PASS**, com a ressalva da diluição acima |
-| viga não teleporta | **PASS** local (`0.209`) e **por modelo** sob rede (`0.208`) — nunca com rede real |
-| resposta < 100 ms | **não medido** — exige cliente |
-| drift < 0.15 u após 5 min | **não medido** — exige cliente |
-| banda média e pico | **não medido** — `rx/tx = 0.0` porque nenhum byte atravessou socket nenhum |
-| late join | **não medido** |
-| queda de host limpa | **não medido** |
-| zero exceções em 10 min | **PASS** |
+| viga não teleporta | **PASS** com rede real (`0.069`), local (`0.209`) e por modelo (`0.208`) |
+| resposta < 100 ms | **não medido** — exige personagem predito no cliente, que não existe |
+| drift < 0.15 u após 5 min | **FAIL por latência**: `0.68 u` no mesmo tick, `0.069 u` alinhado. Ver `docs/99` 19 |
+| banda média e pico | **não medível nesta stack** — `rx/tx = -1`. FishNet 4.7.3 não expõe contagem de bytes (`docs/99` 17) |
+| late join | **FAIL por escopo**: `recebeu 1 de 151 corpo(s)`. Só a viga replica |
+| queda de host limpa | **PASS** — `host_quit` do host, `shutdown clean=1 reason=host_lost` do cliente, zero exceção |
+| zero exceções em 10 min | **PASS**, com duas instâncias |
 
-**O transporte FishySteamworks nunca passou um byte.** O lobby da Steam subiu de verdade
-(`changes/06`: criado em 300 ms, entrada por código em 350 ms), mas lobby é matchmaking e
-transporte é socket. A prova provavelmente exige uma 2ª máquina (`decisions/01`).
+**O transporte FishySteamworks continua sem passar um byte.** Tudo acima foi medido sobre
+**Tugboat**, o transporte UDP local. O lobby da Steam subiu de verdade (`changes/06`: criado
+em 300 ms, entrada por código em 350 ms), mas lobby é matchmaking e transporte é socket. A
+prova provavelmente exige uma 2ª máquina (`decisions/01`).
+
+**Nenhum RTT foi injetado nestas corridas.** Os 150 ms e 3% de perda que o briefing exige
+simular ainda **não** entraram na medição com rede real — e o `drift` já reprova com RTT
+**zero**. Com 150 ms ele piora, não melhora.
 
 Os números de rede que existem (`changes/08`) são de um **modelo determinístico**
 (`decisions/10`), rotulados `[MODELO]`, com RTT fixo e **sem jitter** — otimistas
@@ -113,3 +182,6 @@ exatamente na dimensão que mais importa (`docs/99` item 16).
 | viga: agarre assimétrico | inclina 10–13°, folga de `2.3 u` que **não volta** | `changes/07` |
 | `[MODELO]` 4 abordagens sob 150 ms/3% | mola `0.2078`; só a abordagem 1 reprova | `changes/08` |
 | `[MODELO]` o botão é o buffer, não o RTT | RTT plano de 50 a 400 ms | `changes/08` |
+| late join: viga chega no cliente em | `122–133 ms`, em 4 corridas | `changes/12`, `14`, `16`, `17` |
+| viga carregada: velocidade | `0.108 u/tick` de rede (~`3.25 u/s`) | `changes/15` |
+| atraso do cliente sobre o host | `4–5 ticks` de rede = `133–167 ms`, RTT zero | `changes/15` |
