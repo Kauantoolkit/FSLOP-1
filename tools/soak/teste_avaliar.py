@@ -281,7 +281,7 @@ def caso_cliente_atrasado_mas_correto():
         return False, "drift nem foi avaliado"
     if r.status != "PASS":
         return False, "esperava PASS, veio %s: %s" % (r.status, r.detalhe)
-    if "atraso de 2 tick(s)" not in r.detalhe:
+    if "atraso de 2.0 tick(s)" not in r.detalhe:
         return False, "o atraso medido nao apareceu no detalhe: %s" % r.detalhe
     return True, "drift=%s (codigo %d): %s" % (r.status, codigo, r.detalhe)
 

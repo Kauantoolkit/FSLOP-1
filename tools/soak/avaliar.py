@@ -514,6 +514,43 @@ def maior_distancia_com_deslocamento(host, cliente, deslocamento):
     return max(ds), len(ds)
 
 
+def entre(a, b, t):
+    """Ponto entre a e b. t=0 devolve a, t=1 devolve b."""
+    return (a[0] + (b[0] - a[0]) * t,
+            a[1] + (b[1] - a[1]) * t,
+            a[2] + (b[2] - a[2]) * t)
+
+
+def maior_distancia_sub_tick(host, cliente, inteiro, fracao):
+    """Pior distancia com atraso FRACIONARIO de `inteiro + fracao` ticks.
+
+    Existe porque o atraso real nao cai em tick redondo, e alinhar so por tick
+    inteiro deixa um residuo que PARECE divergencia. Medido em 18/09: com RTT zero o
+    `drift_alinhado` dava 0.0647 u, que a 0.108 u/tick e exatamente 0.60 tick — a
+    parte fracionaria de um atraso de ~4.6 ticks, e nao estado errado.
+
+    A posicao do host no instante fracionario (T - inteiro - fracao) sai interpolando
+    entre os dois ticks vizinhos. Interpolar a serie do HOST e legitimo aqui: ela e a
+    verdade amostrada, e o que se procura e onde ela estava ENTRE duas amostras.
+    """
+    pior = None
+    usados = 0
+    for obj, por_tick_cliente in cliente.items():
+        por_tick_host = host.get(obj)
+        if not por_tick_host:
+            continue
+        for ntick, pos_cliente in por_tick_cliente.items():
+            depois = por_tick_host.get(ntick - inteiro)
+            antes = por_tick_host.get(ntick - inteiro - 1)
+            if depois is None or antes is None:
+                continue
+            d = distancia(entre(antes, depois, 1.0 - fracao), pos_cliente)
+            usados += 1
+            if pior is None or d > pior:
+                pior = d
+    return pior, usados
+
+
 def checar_drift(corrida):
     """Drift e comparacao ENTRE instancias, e por isso nao sai da linha de amostra.
 
@@ -582,6 +619,7 @@ def checar_drift(corrida):
         distancias = [d for d, _, _ in no_tick]
         pior_par = max(no_tick)
 
+        # Passo 1: melhor tick INTEIRO. Varre a faixa toda.
         melhor = None
         melhor_deslocamento = 0
         for deslocamento in range(0, BUSCA_ATRASO_TICKS + 1):
@@ -592,13 +630,29 @@ def checar_drift(corrida):
                 melhor = valor[0]
                 melhor_deslocamento = deslocamento
 
+        # Passo 2: refina em SUB-TICK, so na vizinhanca do melhor inteiro. Varrer a
+        # faixa inteira em passos de 0.1 custaria 10x e nao acharia nada novo: a
+        # funcao tem um minimo so, e o passo 1 ja disse onde ele esta.
+        melhor_atraso = float(melhor_deslocamento)
+        for inteiro in (melhor_deslocamento - 1, melhor_deslocamento, melhor_deslocamento + 1):
+            if inteiro < 0:
+                continue
+            for decimo in range(0, 10):
+                fracao = decimo / 10.0
+                valor, usados = maior_distancia_sub_tick(host, cliente, inteiro, fracao)
+                if valor is None or usados == 0:
+                    continue
+                if valor < melhor:
+                    melhor = valor
+                    melhor_atraso = inteiro + fracao
+
         piores.append({
             "id": identidade,
             "mesmo": pior_par[0],
             "obj": pior_par[1],
             "ntick": pior_par[2],
             "alinhado": melhor,
-            "atraso": melhor_deslocamento,
+            "atraso": melhor_atraso,
             "pares": len(no_tick),
             "corpos": len(set(cliente) & set(host)),
             "p99": percentil(distancias, 0.99),
@@ -627,7 +681,7 @@ def checar_drift(corrida):
     return Resultado(
         "drift", status,
         "pior id=%s: drift_mesmo_ntick max %.4f u (obj=%s ntick=%s) p99 %.4f u "
-        "(limite %.2f) | alinhado %.4f u com atraso de %d tick(s) | %d corpo(s) e "
+        "(limite %.2f) | alinhado %.4f u com atraso de %.1f tick(s) | %d corpo(s) e "
         "%d par(es) comparados, %d cliente(s) acima do limite%s"
         % (pior["id"], pior["mesmo"], pior["obj"], pior["ntick"], pior["p99"], limite,
            pior["alinhado"], pior["atraso"], pior["corpos"], pior["pares"],
