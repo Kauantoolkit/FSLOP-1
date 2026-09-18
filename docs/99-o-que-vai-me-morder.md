@@ -461,3 +461,61 @@ destes dois foi um número razoável.
 **Sai daqui quando:** existir, para cada candidata, uma conferência explícita de que a cena
 gerada tem o mesmo estado serializado que uma cena montada à mão teria — e essa conferência
 rodar junto com o gerador, não na minha cabeça.
+
+## 19. O limiar de 0,15 u de drift pode não caber em NENHUMA stack, e isso é do briefing
+
+**Estado:** aberto. **Não é decisão minha** — o limiar é do briefing, e mexer nele é do usuário.
+
+Medido em 18/09 (`changes/15`), soak de 10 min, late join aos 3 min, Tugboat local, **zero
+RTT injetado**, zero exceção, 10.653 pares de tick comparados:
+
+```
+drift_mesmo_ntick   max 0.7185 u   p99 0.6820 u   (limite 0.15)
+drift_alinhado      0.0769 u       com atraso de 5 tick(s)
+```
+
+Os dois números dizem coisas diferentes, e é por isso que são dois:
+
+- **o estado do cliente está certo.** Descontado o atraso, a divergência é **0,077 u**,
+  abaixo do limiar. O cliente não está simulando outra coisa;
+- **o que reprova é latência.** 5 ticks de rede a 30 Hz = **167 ms**. E `p99 ≈ max` significa
+  que isso é **regime**, não pico: o cliente fica permanentemente esse tanto atrás.
+
+### A conta que transforma isso num problema de método
+
+A viga carregada anda a **0,108 u por tick** de rede em média, e **0,134** nos trechos retos
+(medido nos `[SOAK-POS]` do host da própria corrida, em dois instantes distintos — 400 s e
+600 s — com resultados coincidentes).
+
+Para `drift_mesmo_ntick ≤ 0,15 u` a esse ritmo, o atraso total do cliente teria que ser:
+
+| ritmo | ticks de folga | tempo |
+|---|---|---|
+| 0,108 u/tick (média) | 1,39 | **46 ms** |
+| 0,134 u/tick (reto) | 1,12 | **37 ms** |
+
+O buffer de interpolação mínimo do `NetworkTransform` da candidata B é **1 tick**
+(`_interpolation`, `[Range(1, MAX_INTERPOLATION)]`, default 2) — **33 ms sozinho**, a 30 Hz.
+Sobram ~4 ms para fila, trânsito e fase de amostragem. Com RTT real de 150 ms, que o briefing
+exige simular, não sobra nada.
+
+**A inferência — e ela é inferência, não medição:** isto parece ser propriedade do *par
+métrica × velocidade do objeto*, não da candidata B. Qualquer replicação interpolada põe o
+cliente ao menos um intervalo de snapshot atrás; a 3,25 u/s, um intervalo já custa ~0,11 u de
+0,15 disponíveis. **Só será fato quando as candidatas A e C forem medidas com o mesmo
+instrumento** — e é exatamente o tipo de coisa que o spike existe para achar.
+
+### As saídas, e por que nenhuma é minha para escolher
+
+| saída | custo |
+|---|---|
+| subir o `TickRate` (30 → 60 Hz) | corta o atraso pela metade e **dobra a banda** — que é outra métrica do briefing, e que na candidata B **não é medível** (item 17). Trocar um FAIL por um número que não sei medir |
+| baixar `_interpolation` para 1 | 33 ms a menos, ao custo de engasgo visível a cada pacote atrasado. É o dial de `changes/08`, medido: buffer 0 deu 117 quadros congelados de 173 |
+| extrapolar no cliente | o cliente passa a **inventar** posição; erra nas mudanças de direção, que é onde a viga carregada mais muda |
+| medir drift **alinhado** | seria trocar a régua depois de ver o resultado. Não |
+| o objeto carregado andar mais devagar | é **design**, e design não é meu |
+| o limiar não ser 0,15 u | é do **briefing**, e briefing não é meu |
+
+**Sai daqui quando:** o usuário disser qual das saídas vale — ou quando as candidatas A e C
+mostrarem que uma delas fecha 0,15 u com o mesmo teste mínimo, o que tornaria isto um ponto
+contra a B em vez de um furo da métrica.

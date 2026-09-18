@@ -252,8 +252,9 @@ namespace Fslop.SpikeB
             sondas.Add(viga.Body);
 
             Evento("late_join_done", string.Format(CultureInfo.InvariantCulture,
-                "elapsed_ms={0:F1} world_hash={1} bodies={2}",
-                (Decorrido() - inicioDoLateJoin) * 1000f, HashDoMundo(), sondas.Count));
+                "elapsed_ms={0:F1} ntick={1} world_hash={2} bodies={3}",
+                (Decorrido() - inicioDoLateJoin) * 1000f, TickDaRede(), HashDoMundo(),
+                sondas.Count));
 
             return true;
         }
@@ -588,11 +589,26 @@ namespace Fslop.SpikeB
             // decorador que conte na passagem — e isso e change propria, nao um campo que eu
             // possa preencher com palpite.
             Linha(string.Format(CultureInfo.InvariantCulture,
-                "[SOAK] t={0:F3} tick={1} role={2} id={3} fps={4:F1} frame_p99_ms={5:F3} " +
-                "rx_KBps=-1 tx_KBps=-1 drift_max_u=-1 drift_p99_u=-1 " +
-                "carry_jump_u={6:F4} input_ms_p99=-1 bodies_awake={7} world_hash={8}",
-                Decorrido(), tick, papel, identidade, quadrosNoSegundo / janela, p99,
-                maiorSaltoDaViga, acordados, HashDoMundo()));
+                "[SOAK] t={0:F3} tick={1} ntick={2} role={3} id={4} fps={5:F1} " +
+                "frame_p99_ms={6:F3} rx_KBps=-1 tx_KBps=-1 drift_max_u=-1 drift_p99_u=-1 " +
+                "carry_jump_u={7:F4} input_ms_p99=-1 bodies_awake={8} world_hash={9}",
+                Decorrido(), tick, TickDaRede(), papel, identidade,
+                quadrosNoSegundo / janela, p99, maiorSaltoDaViga, acordados, HashDoMundo()));
+        }
+
+        /// <summary>
+        /// Tick da rede, ou -1 quando nao ha rede. Existe porque `tick` — o contador de
+        /// FixedUpdate — NAO e comparavel entre instancias: ele comeca em zero quando o
+        /// processo sobe, e dois processos sobem em instantes diferentes. Casar world_hash
+        /// por ele comparava momentos diferentes da simulacao, e era por isso que a checagem
+        /// de late join reprovava com "nenhuma amostra do host no tick=5": o cliente estava
+        /// no quinto FixedUpdate DELE, e o host, naquele numero de tick, estava em t=0.1 s.
+        ///
+        /// -1 e "nao instrumentado" (docs/00), nunca zero: zero e um tick de rede valido.
+        /// </summary>
+        long TickDaRede()
+        {
+            return rede == null || rede.TimeManager == null ? -1L : rede.TimeManager.Tick;
         }
 
         /// <summary>

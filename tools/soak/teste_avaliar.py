@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import avaliar as av  # noqa: E402
 
 HASH = "a1b2c3d4"
+CORPOS = 151      # 150 caixas + a viga, como o teste minimo do briefing manda
 N_AMOSTRAS = 11
 T0 = 296.0          # comeca antes dos 300 s para o corte de drift ser exercido
 TICK0 = 17760
@@ -112,9 +113,10 @@ def montar_base():
         cliente.append(amostra("client", 1, i))
     host.extend(serie_pos("host", 0))
     cliente.extend(serie_pos("client", 1))
+    host.append(evento("host", 0, "spawn_done", TICK0, T0, bodies=str(CORPOS)))
     cliente.append(
         evento("client", 1, "late_join_done", TICK_LATE, T0 + 2,
-               elapsed_ms="820.0", world_hash=HASH)
+               elapsed_ms="820.0", world_hash=HASH, bodies=str(CORPOS))
     )
     host.append(evento("host", 0, "host_quit", TICK0 + 10 * 60, T0 + 10))
     cliente.append(
@@ -204,7 +206,7 @@ def caso_input_nao_instrumentado():
         amostra("client", 1, i, input_ms_p99="-1") for i in range(N_AMOSTRAS)
     ] + [
         evento("client", 1, "late_join_done", TICK_LATE, T0 + 2,
-               elapsed_ms="820.0", world_hash=HASH),
+               elapsed_ms="820.0", world_hash=HASH, bodies=str(CORPOS)),
         evento("client", 1, "shutdown", TICK0 + 10 * 60, T0 + 10, clean="1", reason="x"),
     ]
     return espera_falha(a, "resposta_do_input")
@@ -394,26 +396,66 @@ def caso_drift_antes_dos_300s_nao_conta():
         res["drift"].detalhe if "drift" in res else "-")
 
 
-def caso_late_join_divergente():
+def trocar_late_join(arquivos, **campos):
+    base = {"elapsed_ms": "820.0", "world_hash": HASH, "bodies": str(CORPOS)}
+    base.update(campos)
+    arquivos["inst1-client.log"] = [
+        evento("client", 1, "late_join_done", TICK_LATE, T0 + 2, **base)
+        if "late_join_done" in l else l
+        for l in arquivos["inst1-client.log"]
+    ]
+    return arquivos
+
+
+def caso_late_join_incompleto():
+    """O cliente recebeu MENOS corpos do que o host criou.
+
+    E o que "recebe estado completo e correto" do briefing quer dizer na parte
+    'completo'. Caso real: hoje a candidata B replica so a viga, e o cliente emite
+    bodies=1 contra os 151 do host — este caso e o espelho sintetico disso.
+    """
+    return espera_falha(trocar_late_join(montar_base(), bodies="140"), "late_join")
+
+
+def caso_late_join_sem_bodies():
+    """Evento sem o campo: nao da para afirmar completude, entao nao passa."""
     a = montar_base()
     a["inst1-client.log"] = [
         evento("client", 1, "late_join_done", TICK_LATE, T0 + 2,
-               elapsed_ms="820.0", world_hash="deadbeef")
-        if "late_join_done" in l else l
-        for l in a["inst1-client.log"]
-    ]
-    return espera_falha(a, "late_join")
-
-
-def caso_late_join_sem_tick_no_host():
-    a = montar_base()
-    a["inst1-client.log"] = [
-        evento("client", 1, "late_join_done", 999999, T0 + 2,
                elapsed_ms="820.0", world_hash=HASH)
         if "late_join_done" in l else l
         for l in a["inst1-client.log"]
     ]
     return espera_falha(a, "late_join")
+
+
+def caso_late_join_sem_spawn_done():
+    """Sem saber quantos corpos o mundo tem, 'completo' nao tem contra o que ser medido.
+
+    Guarda contra o pior verde possivel: o avaliador nao pode aprovar completude
+    comparando o cliente com nada.
+    """
+    a = montar_base()
+    a["inst0-host.log"] = [l for l in a["inst0-host.log"] if "ev=spawn_done" not in l]
+    return espera_falha(a, "late_join")
+
+
+def caso_late_join_hash_diferente_nao_reprova():
+    """Guarda contra a regra ANTIGA voltar.
+
+    O cliente renderiza interpolado, alguns ticks atras do host (medido: 5). O hash
+    quantiza a 0.01 u e a viga anda ~0.108 u por tick — um unico tick de diferenca ja
+    muda o hash. Exigir hash igual num instante e exigir latencia zero, e reprovava
+    replicacao correta. Quem responde 'esta no lugar certo?' e o drift.
+    """
+    a = trocar_late_join(montar_base(), world_hash="deadbeef")
+    codigo, res = rodar(a)
+    r = res.get("late_join")
+    if r is None:
+        return False, "late_join nem foi avaliado"
+    if r.status != "PASS":
+        return False, "hash diferente reprovou de novo: %s" % r.detalhe
+    return True, "late_join=%s (codigo %d): %s" % (r.status, codigo, r.detalhe)
 
 
 def caso_sem_host_quit():
@@ -470,8 +512,10 @@ CASOS = [
     ("input acima de 100 ms", caso_input_lento),
     ("drift acima de 0.15 depois dos 5 min", caso_drift_alto),
     ("drift alto ANTES dos 5 min nao reprova", caso_drift_antes_dos_300s_nao_conta),
-    ("late join com estado divergente", caso_late_join_divergente),
-    ("late join sem tick correspondente no host", caso_late_join_sem_tick_no_host),
+    ("late join com estado incompleto", caso_late_join_incompleto),
+    ("late join sem campo bodies", caso_late_join_sem_bodies),
+    ("late join sem spawn_done do host", caso_late_join_sem_spawn_done),
+    ("late join: hash diferente NAO reprova", caso_late_join_hash_diferente_nao_reprova),
     ("host nunca emitiu host_quit", caso_sem_host_quit),
     ("cliente encerrou com clean=0", caso_shutdown_sujo),
     ("cliente nao emitiu shutdown", caso_cliente_calado_no_shutdown),

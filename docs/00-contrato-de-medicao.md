@@ -56,7 +56,7 @@ auto-descritivo: quem o ler daqui a três meses sabe contra o que ele vale.
 Uma por segundo, por instância. É a série temporal.
 
 ```
-[SOAK] t=<float> tick=<int> role=<host|client> id=<0..3>
+[SOAK] t=<float> tick=<int> ntick=<int> role=<host|client> id=<0..3>
        fps=<float> frame_p99_ms=<float>
        rx_KBps=<float> tx_KBps=<float>
        drift_max_u=<float> drift_p99_u=<float>
@@ -66,6 +66,8 @@ Uma por segundo, por instância. É a série temporal.
 
 | campo | quem emite | como se calcula |
 |---|---|---|
+| `tick` | todos | contador **local** de passo de física. Começa em zero quando o processo sobe, e por isso **não é comparável entre instâncias**. |
+| `ntick` | todos | tick **da rede**, ou `-1` quando não há rede. É o único da linha que serve para casar instâncias. |
 | `fps` | todos | quadros no último segundo. Não é média móvel. |
 | `frame_p99_ms` | todos | p99 dos tempos de quadro **do último segundo** |
 | `rx_KBps` / `tx_KBps` | todos | bytes de socket no último segundo ÷ 1024 |
@@ -181,11 +183,33 @@ Aperiódica. É o que o PASS/FAIL de late join e de queda do host lê.
 | `peer_disconnected` | o simétrico do acima | `conn=<id\|eu>` |
 | `spawn_done` | os 150 corpos existem | `bodies=<int>` |
 | `late_join_begin` | instância entra depois do início | `at_t=<float>` |
-| `late_join_done` | estado recebido por inteiro | `elapsed_ms=<float> world_hash=<hex8>` |
+| `late_join_done` | estado recebido por inteiro | `elapsed_ms=<float> ntick=<int> world_hash=<hex8> bodies=<int>` |
 | `grab` / `release` | agarre da viga | `by=<id> holders=<int>` |
 | `host_quit` | host encerrou de propósito | — |
 | `shutdown` | instância encerrou | `clean=<0\|1> reason=<str>` |
 | `exception` | qualquer exceção não tratada | `where=<str>` |
+
+### Late join pergunta "recebeu TUDO?", e só isso
+
+**Corrigido em 18/09/2026.** A checagem de late join comparava o `world_hash` do cliente com o
+de uma amostra do host **no mesmo `tick`**, e era insalubre por dois motivos independentes:
+
+1. casava pelo `tick` **local**, que não é comparável entre processos — reprovava com
+   "nenhuma amostra do host no tick=5" mesmo quando tudo estava certo;
+2. **mesmo com a chave certa, o hash nunca bateria.** O cliente renderiza interpolado, alguns
+   ticks atrás do host (medido: **5 ticks**). O hash quantiza a 0,01 u e a viga carregada anda
+   ~0,108 u por tick — **um único tick de diferença já muda o hash**. Exigir igualdade num
+   instante é exigir latência zero.
+
+Era, portanto, uma checagem que reprovava replicação correta e não tinha como passar.
+
+O briefing pede que o cliente "recebe estado completo e correto". As duas palavras são duas
+perguntas, e agora cada uma tem seu dono:
+
+| pergunta | quem responde | como |
+|---|---|---|
+| **completo?** | `late_join` | o `bodies` do `late_join_done` do cliente contra o `bodies` do `spawn_done` do host. Imune a atraso. |
+| **correto?** | `drift` | as duas séries `[SOAK-POS]`, já separando atraso de divergência |
 
 Uma única linha `ev=exception` reprova a corrida inteira. Ela existe para o log
 **dizer** o que aconteceu, não para o avaliador ter que adivinhar por regex sobre o

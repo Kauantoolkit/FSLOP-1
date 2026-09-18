@@ -455,24 +455,25 @@ def distancia(a, b):
     return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2)
 
 
-def maior_distancia_com_deslocamento(host, cliente, deslocamento):
-    """Pior distancia host x cliente quando a serie do cliente e deslocada N ticks.
+def distancias_com_deslocamento(host, cliente, deslocamento):
+    """Distancias host x cliente quando a serie do cliente e deslocada N ticks.
 
-    Devolve (pior, quantos_pares). `deslocamento` positivo significa que o cliente
-    esta ATRASADO: o que ele mostra no tick T e comparado com o que o host tinha em
-    T - deslocamento.
+    `deslocamento` positivo significa que o cliente esta ATRASADO: o que ele mostra
+    no tick T e comparado com o que o host tinha em T - deslocamento.
     """
-    pior = None
-    pares_usados = 0
-    for ntick, pos_cliente in cliente.items():
-        pos_host = host.get(ntick - deslocamento)
-        if pos_host is None:
-            continue
-        d = distancia(pos_host, pos_cliente)
-        pares_usados += 1
-        if pior is None or d > pior:
-            pior = d
-    return pior, pares_usados
+    return [
+        distancia(host[ntick - deslocamento], pos_cliente)
+        for ntick, pos_cliente in cliente.items()
+        if (ntick - deslocamento) in host
+    ]
+
+
+def maior_distancia_com_deslocamento(host, cliente, deslocamento):
+    """Idem, so o pior caso. Devolve (pior, quantos_pares)."""
+    ds = distancias_com_deslocamento(host, cliente, deslocamento)
+    if not ds:
+        return None, 0
+    return max(ds), len(ds)
 
 
 def checar_drift(corrida):
@@ -531,10 +532,14 @@ def checar_drift(corrida):
     piores = []
     for identidade in clientes:
         cliente = serie_de_posicao(corrida, "client", identidade)
-        mesmo, pares_usados = maior_distancia_com_deslocamento(host, cliente, 0)
-        if mesmo is None:
-            piores.append((identidade, None, None, None, 0))
+        no_tick = distancias_com_deslocamento(host, cliente, 0)
+        if not no_tick:
+            piores.append((identidade, None, None, None, 0, None))
             continue
+
+        mesmo = max(no_tick)
+        p99 = percentil(no_tick, 0.99)
+        pares_usados = len(no_tick)
 
         melhor = None
         melhor_deslocamento = 0
@@ -546,7 +551,7 @@ def checar_drift(corrida):
                 melhor = valor
                 melhor_deslocamento = deslocamento
 
-        piores.append((identidade, mesmo, melhor, melhor_deslocamento, pares_usados))
+        piores.append((identidade, mesmo, melhor, melhor_deslocamento, pares_usados, p99))
 
     sem_par = [p for p in piores if p[1] is None]
     if sem_par:
@@ -559,7 +564,7 @@ def checar_drift(corrida):
 
     acima = [p for p in piores if p[1] >= limite]
     pior = max(piores, key=lambda p: p[1])
-    identidade, mesmo, alinhado, deslocamento, pares_usados = pior
+    identidade, mesmo, alinhado, deslocamento, pares_usados, p99 = pior
 
     aviso = ""
     if deslocamento >= BUSCA_ATRASO_TICKS:
@@ -571,43 +576,76 @@ def checar_drift(corrida):
     status = "PASS" if not acima else "FAIL"
     return Resultado(
         "drift", status,
-        "pior id=%s: drift_mesmo_ntick %.4f u (limite %.2f) | alinhado %.4f u com "
-        "atraso de %d tick(s) | %d par(es) de ntick comparados, %d cliente(s) acima "
-        "do limite%s"
-        % (identidade, mesmo, limite, alinhado, deslocamento, pares_usados,
+        "pior id=%s: drift_mesmo_ntick max %.4f u p99 %.4f u (limite %.2f) | "
+        "alinhado %.4f u com atraso de %d tick(s) | %d par(es) de ntick comparados, "
+        "%d cliente(s) acima do limite%s"
+        % (identidade, mesmo, p99, limite, alinhado, deslocamento, pares_usados,
            len(acima), aviso)
     )
 
 
 def checar_late_join(corrida):
+    """Late join pergunta 'recebeu TUDO?'. Quem pergunta 'esta no lugar certo?' e o drift.
+
+    A versao anterior comparava o `world_hash` do cliente com o de uma amostra do host
+    **no mesmo tick**, e era insalubre por dois motivos independentes:
+
+    1. casava pelo `tick` LOCAL, que nao e comparavel entre processos — cada um comeca
+       do zero quando sobe. Reprovava com "nenhuma amostra do host no tick=5" mesmo
+       quando tudo estava certo;
+    2. mesmo com a chave certa, **o hash nunca bateria**. O cliente renderiza
+       interpolado, alguns ticks atras do host (medido: 5 ticks). O hash quantiza a
+       0.01 u e a viga anda ~0.108 u por tick — um unico tick de diferenca ja muda o
+       hash. Exigir igualdade num instante e exigir latencia zero.
+
+    Ou seja: era uma checagem que reprovava replicacao correta e nao tinha como passar.
+    Agora ela pergunta o que de fato e late join — **completude**: o cliente recebeu o
+    mesmo CONJUNTO de corpos que o host criou? Isso e imune a atraso. Se o conjunto bate
+    mas as posicoes estao erradas, quem acusa e `drift`, que ja existe e ja separa
+    atraso de divergencia.
+    """
     feitos = [e for e in corrida.eventos if e.get("ev") == "late_join_done"]
     if not feitos:
         return Resultado("late_join", "FAIL", "nenhum evento ev=late_join_done")
+
+    criados = [
+        e for e in corrida.eventos
+        if e.get("ev") == "spawn_done" and e.get("role") == "host"
+    ]
+    if not criados:
+        return Resultado(
+            "late_join", "FAIL",
+            "nenhum ev=spawn_done do host - sem saber quantos corpos o mundo tem, "
+            "'recebeu o estado completo' nao tem contra o que ser conferido"
+        )
+    esperados = num(criados[0], "bodies")
+    if esperados is None:
+        return Resultado("late_join", "FAIL", "ev=spawn_done do host sem campo bodies=")
+
     problemas = []
     for ev in feitos:
-        tick = ev.get("tick")
-        hash_cliente = ev.get("world_hash")
-        if hash_cliente is None:
-            problemas.append("id=%s sem world_hash no evento" % ev.get("id"))
+        ident = ev.get("id")
+        recebidos = num(ev, "bodies")
+        if recebidos is None:
+            problemas.append("id=%s: ev=late_join_done sem campo bodies=" % ident)
             continue
-        do_host = [
-            a for a in corrida.amostras
-            if a.get("role") == "host" and a.get("tick") == tick
-        ]
-        if not do_host:
+        if recebidos != esperados:
             problemas.append(
-                "id=%s: nenhuma amostra do host no tick=%s para comparar" % (ev.get("id"), tick)
+                "id=%s recebeu %d de %d corpo(s) - estado INCOMPLETO"
+                % (ident, int(recebidos), int(esperados))
             )
-            continue
-        hash_host = do_host[0].get("world_hash")
-        if hash_host != hash_cliente:
-            problemas.append(
-                "id=%s tick=%s: cliente %s != host %s"
-                % (ev.get("id"), tick, hash_cliente, hash_host)
-            )
+        if num(ev, "elapsed_ms") is None:
+            problemas.append("id=%s: ev=late_join_done sem elapsed_ms=" % ident)
+
     status = "PASS" if not problemas else "FAIL"
-    detalhe = ("%d late join(s), estado conferido por world_hash contra o host" % len(feitos)
-               if not problemas else "; ".join(problemas))
+    if not problemas:
+        detalhe = (
+            "%d late join(s), %d de %d corpo(s) em cada; pior elapsed %.1f ms"
+            % (len(feitos), int(esperados), int(esperados),
+               max(num(e, "elapsed_ms", 0.0) for e in feitos))
+        )
+    else:
+        detalhe = "; ".join(problemas)
     return Resultado("late_join", status, detalhe)
 
 
