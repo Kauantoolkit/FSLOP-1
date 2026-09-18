@@ -17,14 +17,22 @@ saída registrada em `tasks/FSLOP-1/changes/`.
 
 ## O veredito, em uma linha
 
-**A candidata B replica o mundo inteiro, replica certo, e replica atrasada demais para a
-métrica do briefing.** Com duas instâncias e um soak de 10 min, os **151 corpos** chegam ao
-cliente em 135 ms e o estado dele está correto — descontado o atraso, a divergência sobre o
-mundo inteiro é `0,065 u` contra o limiar de `0,15`. Mas o cliente fica **permanentemente 4 a
-5 ticks de rede atrás** (133–167 ms), o que põe o erro de posição visível em `0,67 u`.
-**Reprova o drift por latência, não por estado errado.** Ver `docs/99-o-que-vai-me-morder.md`
-item 19: a conta sugere que esse limiar pode não caber em stack nenhuma nesta velocidade de
-objeto, e isso só se confirma medindo A e C.
+**A candidata B replica o mundo inteiro, entrega late join e queda de host limpos, e reprova o
+drift — em rede perfeita por latência, e sob a rede do briefing também por divergência.**
+
+Em rede local sem degradação, os **151 corpos** chegam ao cliente em 135 ms e o estado dele
+está correto: descontado o atraso, a divergência sobre o mundo inteiro é `0,065 u` contra o
+limiar de `0,15`. O que reprova é o cliente ficar **4 a 5 ticks atrás** (133–167 ms), pondo o
+erro visível em `0,67 u`.
+
+Sob os **150 ms e 3% que o briefing manda simular**, o atraso dobra (8 ticks, previsto antes de
+medir) e o erro visível vai a `1,28 u` — mas o que muda a leitura é outra coisa: o
+`drift_alinhado` sobe de `0,065` para **`0,1439 u`**, a 4% do limiar. Ou seja, sob perda o
+cliente **não está só atrasado: ele diverge**. Ver `docs/99` itens 19 e 21.
+
+**O que passa nas condições exatas do briefing:** o objeto carregado **não teleporta**
+(`0,072 u` contra `0,5`), o late join entrega os 151 corpos em `236,5 ms`, a queda do host
+encerra limpa e não há exceção em 10 min.
 
 ## Soak de 10 min com duas instâncias — saída real do avaliador
 
@@ -72,6 +80,56 @@ O pior caso do drift é `obj=464` em `ntick=9016` — **13 ticks depois de o cli
 (`peer_connected` em `ntick≈9003`). Ou seja, o pico está no instante da entrada. Mas o `p99` de
 `0,6133` mostra que o regime não está longe dele: não é um transiente de entrada seguido de
 bom comportamento.
+
+## A mesma corrida sob 150 ms de RTT e 3% de perda
+
+Condição explícita do briefing, cumprida pela primeira vez em 18/09. Mesmo roteiro — host
+660 s, cliente entrando aos 180 s — no **development build** (`Build/SpikeB-dev`), que é a
+única versão em que o simulador do FishNet tem efeito (`docs/99` 20). Build `dc413bc`.
+
+```
+INFO  procedencia         transporte=local rtt_injetado=150ms perda_injetada=3.0% build=dc413bc flavor=development  <<< DEVELOPMENT build: sem stripping e com hooks de profiler. fps daqui NAO vale como fps de release
+PASS  duracao             cobertura 659.2 s (minimo 600 s)
+PASS  relogio_coerente    client/1: 50.0 tick/s mediano; host/0: 50.0 tick/s mediano
+PASS  viga_nao_teleporta  maior salto 0.072 u (limite 0.50) em t=180.991 id=0 | 0 amostra(s) acima
+FAIL  resposta_do_input   nenhuma amostra de cliente com input_ms_p99 medido
+FAIL  drift               pior id=1: drift_mesmo_ntick max 1.2761 u (obj=0 ntick=19215) p99 1.1182 u (limite 0.15) | alinhado 0.1439 u com atraso de 8 tick(s) | 151 corpo(s) e 64800 par(es) comparados
+PASS  late_join           1 late join(s), 151 de 151 corpo(s) em cada; pior elapsed 236.5 ms
+PASS  queda_do_host       1 de 1 cliente(s) encerraram com clean=1
+PASS  zero_excecoes       nenhuma linha ev=exception
+```
+
+**O `fps` desta corrida não está citado de propósito.** É development build: sem stripping,
+com hooks de profiler. O avaliador imprime o aviso, e o número não entra em lugar nenhum.
+
+### O que isto responde do briefing, e o que não
+
+O briefing pede, literalmente: *"Sob 150ms RTT e 3% packet loss simulados: objeto carregado
+**não teleporta** e o personagem **responde em menos de 100ms percebidos**"*. São duas
+exigências:
+
+| exigência | estado |
+|---|---|
+| objeto carregado não teleporta | **PASS** — `0,072 u` contra o limiar de `0,5`, sob as condições exatas do briefing |
+| personagem responde < 100 ms | **não medido** — exige personagem predito no cliente |
+
+### O achado que muda a leitura do drift
+
+| | RTT 0, perda 0 | RTT 150 ms, perda 3% |
+|---|---|---|
+| `drift_mesmo_ntick` máx | `0,6736 u` | `1,2761 u` |
+| `drift_mesmo_ntick` p99 | `0,6133 u` | `1,1182 u` |
+| `drift_alinhado` | `0,0647 u` | **`0,1439 u`** |
+| atraso | 4 ticks | 8 ticks |
+
+O atraso dobrar era **previsto antes de medir** (150 ms ÷ 33 ms por tick ≈ 4,5 somados aos 4
+existentes; previsto "8 a 9", medido 8).
+
+O que **não** estava previsto é o `drift_alinhado`: **2,2× maior**, e a `0,1439` ele está a 4%
+do limiar. Isso é divergência de verdade, não atraso — é o que 3% de perda faz com um cliente
+que só interpola e não reconcilia. Detalhe e ressalvas em `docs/99` item 21; em resumo: é
+**uma** corrida, precisa de repetição e de uma varredura de perda para saber onde a fronteira
+está.
 
 ### Reprodução
 
@@ -157,8 +215,9 @@ medida com a pilha dormindo, que é o caso barato. A intensidade tem dial
 |---|---|
 | fps ≥ 60 no host | **PASS**, com a ressalva da diluição acima |
 | viga não teleporta | **PASS** com rede real (`0.069`), local (`0.209`) e por modelo (`0.208`) |
+| não teleporta sob 150 ms / 3% | **PASS** — `0,072 u` contra limiar `0,5`, nas condições exatas do briefing |
 | resposta < 100 ms | **não medido** — exige personagem predito no cliente, que não existe |
-| drift < 0.15 u após 5 min | **FAIL por latência**: `0.67 u` no mesmo tick, `0.065 u` alinhado, sobre 151 corpos. Ver `docs/99` 19 |
+| drift < 0.15 u após 5 min | **FAIL**. Sem RTT: `0,67 u` / alinhado `0,065`. Sob 150 ms e 3%: `1,28 u` / alinhado `0,144`. Ver `docs/99` 19 e 21 |
 | banda média e pico | **não medível nesta stack** — `rx/tx = -1`. FishNet 4.7.3 não expõe contagem de bytes (`docs/99` 17) |
 | late join | **PASS** — `151 de 151 corpo(s)` em `134.8 ms`, entrando aos 3 min |
 | queda de host limpa | **PASS** — `host_quit` do host, `shutdown clean=1 reason=host_lost` do cliente, zero exceção |
@@ -169,11 +228,10 @@ medida com a pilha dormindo, que é o caso barato. A intensidade tem dial
 em 300 ms, entrada por código em 350 ms), mas lobby é matchmaking e transporte é socket. A
 prova provavelmente exige uma 2ª máquina (`decisions/01`).
 
-**Nenhum RTT foi injetado nestas corridas.** Os 150 ms e 3% de perda que o briefing exige
-simular ainda **não** entraram na medição com rede real — e o `drift` já reprova com RTT
-**zero**. Com 150 ms ele piora, não melhora.
+**A corrida principal acima não tem RTT injetado.** A corrida sob 150 ms / 3% é a da seção
+própria, em development build, e os números das duas **não se misturam**.
 
-E há um motivo concreto para ainda não terem entrado, apurado em 18/09: o simulador de
+O motivo de serem duas corridas e não uma, apurado em 18/09: o simulador de
 latência do FishNet é público (`TransportManager.LatencySimulator`) mas **só é consultado em
 development build** — `TransportManager.cs:1-3` faz `#if UNITY_EDITOR || DEVELOPMENT_BUILD →
 #define DEVELOPMENT`, e os três pontos que o usam estão dentro desse bloco. Num build de

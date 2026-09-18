@@ -559,3 +559,41 @@ precisa dizer de qual veio cada linha.
 
 **Sai daqui quando:** o `SpikePlayerBuilder` souber construir as duas, o `[SOAK-META]` carregar
 qual é, e existir uma corrida sob 150 ms / 3% com número publicado.
+
+## 21. Com 3% de perda, o cliente deixa de estar só atrasado e passa a divergir
+
+**Estado:** aberto, e é o número que muda a leitura do item 19.
+
+Até 18/09 a conclusão sobre drift era confortável: *"o estado do cliente está certo, o que
+reprova é latência"*. Ela vinha de `drift_alinhado = 0,065 u` contra o limiar de `0,15` — ou
+seja, descontado o atraso, sobrava quase nada.
+
+**Essa medição era com RTT zero e perda zero.** Sob as condições que o briefing manda simular:
+
+| | RTT 0, perda 0 | **RTT 150 ms, perda 3%** |
+|---|---|---|
+| `drift_mesmo_ntick` máx | `0,6736 u` | **`1,2761 u`** |
+| `drift_mesmo_ntick` p99 | `0,6133 u` | **`1,1182 u`** |
+| `drift_alinhado` | `0,0647 u` | **`0,1439 u`** |
+| atraso | 4 ticks | **8 ticks** |
+
+O atraso dobrar era esperado e foi **previsto antes da medição** (150 ms ÷ 33 ms por tick ≈
+4,5 ticks somados aos 4 existentes). O que **não** estava previsto é o `drift_alinhado`:
+`0,0647` → `0,1439`, **2,2× maior**.
+
+Isso é divergência de verdade, não atraso — é o que a perda de pacote faz com um cliente que
+só interpola e não reconcilia. E `0,1439` está a **4% do limiar de 0,15**. Com 4% de perda em
+vez de 3%, provavelmente passa.
+
+**Por que isto importa mais que o item 19:** lá o problema era da métrica (um limiar apertado
+demais para qualquer replicação interpolada). Aqui o problema é da **abordagem**: um cliente
+sem reconciliação acumula erro sob perda, e a margem que sobra é fina. O item 19 se resolve
+mexendo no limiar ou na velocidade; este não.
+
+**Ressalva honesta:** é **uma** corrida. `p99` próximo do máximo diz que não é pico isolado,
+mas 2,2× a partir de uma amostra só é tendência, não constante. Precisa de repetição, e de uma
+varredura de perda (1%, 3%, 5%) para saber onde o `drift_alinhado` cruza 0,15.
+
+**Sai daqui quando:** a varredura de perda existir e disser onde está a fronteira — e, se ela
+estiver perto de 3%, a decisão de reconciliar ou não vira pergunta de arquitetura, não de
+ajuste.
