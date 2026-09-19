@@ -71,6 +71,18 @@ namespace Fslop.SpikeB
         /// de 100ms PERCEBIDOS" nao se fecha sem alguem percebendo.
         /// </summary>
         bool humano;
+
+        /// <summary>
+        /// `local` (Tugboat, default) ou `steam` (FishySteamworks com relay).
+        ///
+        /// Existe porque a restricao inegociavel do briefing e "P2P via relay da Steam", e
+        /// ate 19/09 NENHUM byte tinha passado por esse caminho — todas as ~25 corridas
+        /// foram sobre socket UDP local. O bloqueio registrado em decisions/01 ("precisa de
+        /// 2a maquina") era INFERENCIA: ninguem tinha rodado para ver.
+        /// </summary>
+        string transporteEscolhido = "local";
+
+        SteamLobbyService steam;
         float duracaoAlvo = 30f;
 
         /// <summary>
@@ -149,6 +161,23 @@ namespace Fslop.SpikeB
             {
                 rede.TimeManager.OnPostTick -= AoPassarOTickDaRede;
             }
+
+            // ORDEM: o transporte desliga ANTES da Steam. Ele fecha o socket de escuta
+            // chamando SteamNetworkingSockets.CloseListenSocket, e se a Steam ja tiver sido
+            // desligada isso vira "InvalidOperationException: Steamworks is not
+            // initialized" no encerramento — aconteceu na primeira corrida com Steam.
+            // Ordem entre OnDestroy de objetos diferentes nao e garantida, entao o desligar
+            // e explicito aqui em vez de confiar em sorte.
+            if (rede != null && rede.TransportManager != null
+                && rede.TransportManager.Transport != null)
+            {
+                rede.TransportManager.Transport.Shutdown();
+            }
+
+            // SteamAPI.Shutdown. Sem isto o processo pode sair deixando a Steam achando que
+            // o jogo ainda roda, e a corrida seguinte falha no init por motivo que nao tem
+            // nada a ver com ela.
+            steam?.Dispose();
         }
 
         void Start()
@@ -399,6 +428,11 @@ namespace Fslop.SpikeB
                 return;
             }
 
+            if (!EscolherTransporte())
+            {
+                return;
+            }
+
             var transporte = rede.TransportManager.Transport;
             transporte.SetPort(porta);
             transporte.SetClientAddress(endereco);
@@ -428,6 +462,72 @@ namespace Fslop.SpikeB
             Evento("transport_up", string.Format(CultureInfo.InvariantCulture,
                 "papel={0} transporte={1} endereco={2} porta={3}",
                 papel, transporte.GetType().Name, endereco, porta));
+        }
+
+        /// <summary>
+        /// Escolhe o transporte e, no caso da Steam, sobe a API antes. Devolve false quando
+        /// a corrida NAO pode continuar — e continuar seria pior, porque produziria log com
+        /// cara de valido sobre um caminho que nao existe.
+        /// </summary>
+        bool EscolherTransporte()
+        {
+            if (transporteEscolhido != "steam")
+            {
+                return true;
+            }
+
+            var steamTransport = rede.GetComponent<FishySteamworks.FishySteamworks>();
+            if (steamTransport == null)
+            {
+                Evento("exception", "where=FishySteamworks_ausente_na_cena");
+                return false;
+            }
+
+            // A Steam precisa estar inicializada ANTES de o transporte abrir socket: o
+            // ClientSocket chama SteamNetworkingSockets.ConnectP2P direto, sem init proprio.
+            steam = new SteamLobbyService();
+            if (!steam.Init())
+            {
+                Evento("exception", "where=SteamAPI_init_falhou erro=" + steam.LastError);
+                return false;
+            }
+
+            // NAO se troca o Transport aqui, e nao e por gosto: o NetworkManager declara
+            // [DefaultExecutionOrder(short.MinValue)], o PISO da ordem do Unity. Nao existe
+            // componente que rode antes dele, logo nao existe momento em que a troca caiba
+            // antes de o TransportManager inicializar e ASSINAR os eventos de um transporte.
+            //
+            // Trocar depois falha de duas formas, as duas silenciosas, e as duas foram
+            // vistas: sockets nulos (NullReference em cascata) e, corrigido isso, servidor
+            // que sobe e nao avisa ninguem — exit=0, excecoes=0, mundo vazio.
+            //
+            // A escolha e da CENA (SpikeB.unity x SpikeB-steam.unity). Este guarda existe
+            // para a corrida morrer alto se o binario errado for usado.
+            if (rede.TransportManager.Transport != steamTransport)
+            {
+                Evento("exception", "where=cena_sem_FishySteamworks_use_o_build_steam");
+                return false;
+            }
+
+            // O SteamID local e o ENDERECO do host neste transporte: o cliente conecta
+            // fazendo ConnectP2P para ele (ClientSocket.cs:93-99, UInt64.Parse do address).
+            // Publicar no log e o que permite a segunda instancia saber para onde ir.
+            Evento("steam_pronto", string.Format(CultureInfo.InvariantCulture,
+                "steam_id={0} universo={1} papel={2}",
+                (ulong)steam.LocalUser, steam.Universe, papel));
+
+            // RTT/perda injetados NAO valem aqui: o LatencySimulator foi ligado ao transporte
+            // que o TransportManager escolheu no Awake (TransportManager.cs:219), e trocar o
+            // Transport depois deixa o simulador apontando para o outro. Melhor recusar do
+            // que publicar numero sob condicao que nao existiu — mesma regra do guarda de
+            // build de release em changes/20.
+            if (rttMs > 0 || lossPct > 0d)
+            {
+                Evento("exception", "where=rtt_injetado_nao_vale_com_transporte_steam");
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -732,6 +832,11 @@ namespace Fslop.SpikeB
 
         void Update()
         {
+            // Sem RunCallbacks a Steam nao entrega evento nenhum, e o transporte fica
+            // eternamente em Starting sem dizer por que. Barato o bastante para rodar todo
+            // quadro; nulo quando o transporte e local.
+            steam?.Pump();
+
             // Os corpos de rede so existem depois que o FishNet os registra, nos DOIS papeis:
             // no cliente ate o spawn vindo do servidor, no host ate o servidor subir. Por
             // isso a busca fica aqui, e nao no Start.
@@ -1046,6 +1151,10 @@ namespace Fslop.SpikeB
                         double.TryParse(args[i + 1], NumberStyles.Float,
                             CultureInfo.InvariantCulture, out lossPct);
                         lossPct = System.Math.Max(lossPct, 0d);
+                        break;
+
+                    case "-soakTransport":
+                        transporteEscolhido = args[i + 1];
                         break;
 
                     case "-soakHuman":

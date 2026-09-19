@@ -791,3 +791,69 @@ para isso.
 
 **Sai daqui quando:** existir campo no contrato que diga se a corrida renderizou, o avaliador
 recusar `fps` sem ele, e uma corrida com apresentação ligada e 4 clientes publicar o número.
+
+## 24. O FishySteamworks FUNCIONA até o socket de escuta — e tem um bug de timeout de 2h13
+
+**Estado:** o item 7 sai de "zero evidência de runtime" para **meio provado**, com número. Em
+19/09/2026 o transporte rodou pela primeira vez nesta task.
+
+### O que ficou PROVADO
+
+Build dedicada (`Build/SpikeB-steam`), cena com `FishySteamworks` e `_peerToPeer = true`:
+
+```
+[SOAK-EV] ev=steam_pronto steam_id=76561198255018650 universo=k_EUniversePublic papel=host
+[SOAK-EV] ev=transport_up papel=host transporte=FishySteamworks endereco=127.0.0.1 porta=7770
+[SOAK-EV] ev=grab by=0 holders=4
+[SOAK-EV] ev=spawn_done bodies=151
+[SOAK-EV] ev=shutdown clean=1 reason=duracao_atingida excecoes=0
+```
+
+`spawn_done` e `grab` **só saem quando o FishNet é avisado de que o servidor subiu**. Ou seja:
+a Steam inicializa, `CreateListenSocketP2P` devolve socket válido, o `ServerManager` chega a
+`Started`, os 151 corpos nascem e a corrida encerra limpa. **Zero exceção.** A deriva de 2 anos
+do plugin **não** quebrou a integração com o FishNet 4.7.3.
+
+### O que NÃO ficou provado
+
+Uma segunda instância, na **mesma máquina e com o mesmo SteamID**, chamando `ConnectP2P` para
+esse SteamID: **nunca conecta, e em silêncio**.
+
+```
+[SOAK-EV] role=client ev=transport_up transporte=FishySteamworks endereco=76561198255018650
+[SOAK-EV] role=client ev=late_join_timeout esperou_ms=24853.6 bodies=0 esperados=151
+```
+
+Nenhum `peer_connected` em nenhuma das duas pontas. Nenhuma mensagem de erro da Steam em
+nenhum dos dois logs.
+
+**A hipótese continua sendo o SteamID compartilhado** — a Steam roteia P2P por identidade, e
+aqui origem e destino são a mesma. **Mas isso segue sendo hipótese**: o log não diz a causa, e
+descartá-la exige uma segunda conta. O que mudou é o estatuto: antes era inferência sobre algo
+nunca executado; agora é observação sobre algo que rodou.
+
+### O bug da biblioteca, que é o achado independente
+
+`ClientSocket.cs`, três linhas que não fecham entre si:
+
+```csharp
+41:  private const float CONNECT_TIMEOUT_DURATION = 8000;
+89:  _connectTimeout = Time.unscaledTime + CONNECT_TIMEOUT_DURATION;
+54:  if ((sw.ElapsedMilliseconds / 1000) > _connectTimeout) StopConnection();
+```
+
+`Time.unscaledTime` está em **segundos**; `ElapsedMilliseconds / 1000` também. A constante
+`8000` só faz sentido como **milissegundos** (8 s). Somada a segundos e comparada com segundos,
+ela vira um timeout de **8000 segundos — 2 h 13 min**.
+
+**O efeito em jogo:** quem tentar entrar numa sala que não existe mais fica em "conectando…"
+por duas horas, sem mensagem, sem erro, sem desistir. Foi exatamente o que a corrida acima
+mostrou — o cliente ficou 25 s em `Starting` e teria ficado até o fim do soak.
+
+**Isto é contornável do nosso lado** (timeout próprio no `SoakRunner`, e o `late_join_timeout`
+já dá o sinal), mas é sintoma do que o item 7 diz: a peça que liga tudo ao "P2P via relay da
+Steam" está sem manutenção desde 2024, e este é o primeiro defeito concreto encontrado nela.
+
+**Sai daqui quando:** houver uma segunda conta Steam numa segunda máquina e dois peers
+distintos trocarem bytes pelo relay. Sem isso, a restrição inegociável do briefing continua
+**sem prova** — mas agora falta exatamente uma coisa, e ela está nomeada.

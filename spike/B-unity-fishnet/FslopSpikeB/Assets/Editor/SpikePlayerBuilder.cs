@@ -27,6 +27,9 @@ namespace Fslop.SpikeB.EditorTools
         public const string SaidaDirDev = "Build/SpikeB-dev";
         public const string SaidaExeDev = SaidaDirDev + "/FslopSpikeB.exe";
 
+        public const string SaidaDirSteam = "Build/SpikeB-steam";
+        public const string SaidaExeSteam = SaidaDirSteam + "/FslopSpikeB.exe";
+
         [MenuItem("FSLOP/Construir player do soak")]
         public static void Build()
         {
@@ -51,18 +54,53 @@ namespace Fslop.SpikeB.EditorTools
             Construir(desenvolvimento: true);
         }
 
-        static void Construir(bool desenvolvimento)
+        /// <summary>
+        /// Player da cena com FishySteamworks, em diretorio proprio.
+        ///
+        /// E build separado, e nao flag de runtime, porque o transporte e escolha da CENA —
+        /// ver o cabecalho de SpikeSceneBuilder.BuildSteam. Diretorio proprio pelo mesmo
+        /// motivo do development: se os dois sobrescrevessem o mesmo .exe, a corrida
+        /// seguinte usaria o errado sem nada acusar.
+        /// </summary>
+        [MenuItem("FSLOP/Construir player do soak (Steam)")]
+        public static void BuildSteam()
         {
+            Construir(desenvolvimento: false, comSteam: true);
+        }
+
+        static void Construir(bool desenvolvimento, bool comSteam = false)
+        {
+            // A cena e SEMPRE regerada junto com o player, e isso nao e conveniencia: a
+            // cena e produto de script (decisions/07), entao um player construido sobre
+            // cena velha carrega estado que o codigo atual nao produz mais.
+            //
+            // Ja mordeu: ao remover um componente do gerador, a cena local ficou com
+            // referencia pendurada para o script apagado e o build saiu com aviso — e teria
+            // rodado, com um componente a menos, sem ninguem notar.
+            if (comSteam)
+            {
+                SpikeSceneBuilder.BuildSteam();
+            }
+            else
+            {
+                SpikeSceneBuilder.Build();
+            }
+
+            string saida = comSteam
+                ? SaidaExeSteam
+                : (desenvolvimento ? SaidaExeDev : SaidaExe);
+
             var opcoes = new BuildPlayerOptions
             {
-                scenes = new[] { SpikeSceneBuilder.ScenePath },
-                locationPathName = desenvolvimento ? SaidaExeDev : SaidaExe,
+                scenes = new[] { comSteam ? SpikeSceneBuilder.SteamScenePath : SpikeSceneBuilder.ScenePath },
+                locationPathName = saida,
                 target = BuildTarget.StandaloneWindows64,
                 targetGroup = BuildTargetGroup.Standalone,
                 options = desenvolvimento ? BuildOptions.Development : BuildOptions.None,
             };
 
-            Log("flavor=" + (desenvolvimento ? "development" : "release"));
+            Log("flavor=" + (desenvolvimento ? "development" : "release")
+                + " transporte=" + (comSteam ? "steam" : "local"));
 
             var relatorio = BuildPipeline.BuildPlayer(opcoes);
             var resumo = relatorio.summary;

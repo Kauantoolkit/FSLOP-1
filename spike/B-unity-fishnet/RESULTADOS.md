@@ -376,10 +376,25 @@ conectados, e declarar `display=local`. Nenhuma das três coisas foi feita junta
 | queda de host limpa | **PASS** — `host_quit` do host, `shutdown clean=1 reason=host_lost` do cliente, zero exceção |
 | zero exceções em 10 min | **PASS**, com duas instâncias |
 
-**O transporte FishySteamworks continua sem passar um byte.** Tudo acima foi medido sobre
-**Tugboat**, o transporte UDP local. O lobby da Steam subiu de verdade (`changes/06`: criado
-em 300 ms, entrada por código em 350 ms), mas lobby é matchmaking e transporte é socket. A
-prova provavelmente exige uma 2ª máquina (`decisions/01`).
+**O transporte FishySteamworks roda — até o socket de escuta.** Todos os números das seções
+acima foram medidos sobre **Tugboat**, o transporte UDP local. Mas em 19/09 o FishySteamworks
+foi executado pela primeira vez, em build dedicada, e o resultado é parcial e específico:
+
+| o que | estado |
+|---|---|
+| `SteamAPI` inicializa no player | **PASS** — `steam_id=76561198255018650`, universo público |
+| `CreateListenSocketP2P` devolve socket válido | **PASS** |
+| FishNet chega a `ServerManager Started` sobre ele | **PASS** — `spawn_done bodies=151` e `grab holders=4` só saem daí |
+| corrida limpa sobre o transporte | **PASS** — `shutdown clean=1`, zero exceção |
+| **um segundo peer conectar pelo relay** | **NÃO PROVADO** — mesma máquina, mesmo SteamID, nunca conecta e em silêncio |
+
+**A deriva de 2 anos do plugin não quebrou a integração com o FishNet 4.7.3** — isso era risco
+aberto no `docs/99` item 7 e agora tem evidência contrária.
+
+**Mas encontrou-se um defeito na biblioteca:** `ClientSocket.cs` mistura unidades entre as
+linhas 41, 89 e 54, e o timeout de conexão que deveria ser de **8 s** vira **8000 s (2 h 13
+min)**. Quem tentar entrar numa sala inexistente fica em "conectando…" por duas horas, sem
+mensagem. Detalhe em `docs/99` item 24.
 
 **A corrida principal acima não tem RTT injetado.** A corrida sob 150 ms / 3% é a da seção
 própria, em development build, e os números das duas **não se misturam**.

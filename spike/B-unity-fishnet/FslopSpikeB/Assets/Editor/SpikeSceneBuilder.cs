@@ -21,6 +21,7 @@ namespace Fslop.SpikeB.EditorTools
     {
         public const string SceneFolder = "Assets/Scenes";
         public const string ScenePath = SceneFolder + "/SpikeB.unity";
+        public const string SteamScenePath = SceneFolder + "/SpikeB-steam.unity";
 
         public const string PhysicsFolder = "Assets/Physics";
         public const string NetworkFolder = "Assets/Network";
@@ -51,6 +52,33 @@ namespace Fslop.SpikeB.EditorTools
         [MenuItem("FSLOP/Gerar cena do spike B")]
         public static void Build()
         {
+            Gerar(comSteam: false);
+        }
+
+        /// <summary>
+        /// A mesma cena, com FishySteamworks no lugar do Tugboat.
+        ///
+        /// POR QUE DUAS CENAS e nao uma com escolha em runtime: o NetworkManager declara
+        /// `[DefaultExecutionOrder(short.MinValue)]` — o PISO da ordem de execucao do Unity.
+        /// Nao existe componente que rode antes dele, entao nao existe momento em que eu
+        /// possa escolher o transporte antes de o TransportManager inicializar e ASSINAR os
+        /// eventos de um. Trocar depois falha de duas formas, as duas silenciosas, e as duas
+        /// foram vistas: sockets nulos (NullReference em cascata) e, corrigido isso, servidor
+        /// que sobe e nao avisa ninguem — corrida inteira com exit=0, excecoes=0 e mundo
+        /// vazio.
+        ///
+        /// Duas cenas GERADAS PELO MESMO CODIGO nao divergem: a unica diferenca e qual
+        /// componente de transporte entra, e ela esta numa linha so.
+        /// </summary>
+        [MenuItem("FSLOP/Gerar cena do spike B (Steam)")]
+        public static void BuildSteam()
+        {
+            Gerar(comSteam: true);
+        }
+
+        static void Gerar(bool comSteam)
+        {
+            string caminho = comSteam ? SteamScenePath : ScenePath;
             var playerMaterial = CreatePlayerMaterial();
 
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -61,7 +89,7 @@ namespace Fslop.SpikeB.EditorTools
             CreateCamera();
             var prefabDaCaixa = CreateBoxStack();
             CreateBeam();
-            CreateNetwork(prefabDaCaixa);
+            CreateNetwork(prefabDaCaixa, comSteam);
             CreateSoakRunner();
 
             if (!AssetDatabase.IsValidFolder(SceneFolder))
@@ -71,19 +99,21 @@ namespace Fslop.SpikeB.EditorTools
 
             AtribuirIdsDeCena(scene);
 
-            if (!EditorSceneManager.SaveScene(scene, ScenePath))
+            if (!EditorSceneManager.SaveScene(scene, caminho))
             {
-                throw new System.Exception("[BUILDER] SaveScene falhou para " + ScenePath);
+                throw new System.Exception("[BUILDER] SaveScene falhou para " + caminho);
             }
 
             // A cena precisa estar na lista de build porque a change 09 sobe o player
-            // headless, e player headless nao tem quem escolha cena.
-            EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
+            // headless, e player headless nao tem quem escolha cena. UMA cena por build:
+            // duas na lista fariam o player abrir a primeira, e a escolha de transporte
+            // viraria sorte outra vez.
+            EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(caminho, true) };
             AssetDatabase.SaveAssets();
 
-            Log("cena escrita em " + ScenePath);
+            Log("cena escrita em " + caminho);
+            Log("transporte=" + (comSteam ? "FishySteamworks (relay)" : "Tugboat (local)"));
             Log("raizes=" + scene.rootCount);
-            Log("material do player=" + PlayerMaterialPath);
         }
 
         /// <summary>
@@ -153,6 +183,44 @@ namespace Fslop.SpikeB.EditorTools
                     "[BUILDER] nenhum NetworkObject na cena. A viga deveria ter um " +
                     "(CreateBeam) — sem ele nao ha o que replicar e o soak mede o vazio.");
             }
+        }
+
+        /// <summary>
+        /// Liga o modo peer-to-peer do FishySteamworks, que e o que passa pelo RELAY da
+        /// Steam. O default do plugin e `false` (FishySteamworks.cs:52) — fora da caixa ele
+        /// usa ConnectByIPAddress e nao toca no relay.
+        ///
+        /// Isso importa para o briefing: a restricao inegociavel diz "P2P via relay da
+        /// Steam", e uma corrida com o default estaria provando outra coisa. Sem esta linha,
+        /// "o FishySteamworks funcionou" seria verdade e irrelevante.
+        ///
+        /// Vai por SerializedObject porque o campo e [SerializeField] private sem setter
+        /// publico — mesma situacao do _componentConfiguration em changes/14.
+        /// </summary>
+        static void ConfigurarSteam(FishySteamworks.FishySteamworks transporte)
+        {
+            const string campo = "_peerToPeer";
+
+            var serializado = new SerializedObject(transporte);
+            var propriedade = serializado.FindProperty(campo);
+
+            if (propriedade == null)
+            {
+                throw new System.Exception(
+                    "[BUILDER] campo '" + campo + "' nao existe mais no FishySteamworks. " +
+                    "A versao do plugin mudou: reler FishySteamworks.cs antes de seguir.");
+            }
+
+            propriedade.boolValue = true;
+            serializado.ApplyModifiedPropertiesWithoutUndo();
+
+            var relido = new SerializedObject(transporte).FindProperty(campo);
+            if (!relido.boolValue)
+            {
+                throw new System.Exception("[BUILDER] '" + campo + "' nao ficou true.");
+            }
+
+            Log("FishySteamworks: " + campo + "=true (relay da Steam)");
         }
 
         static string CaminhoNaHierarquia(Transform t)
@@ -429,15 +497,21 @@ namespace Fslop.SpikeB.EditorTools
         /// Tugboat e transporte UDP local. E o que decisions/01 previu para o soak
         /// automatizado; o relay da Steam continua sendo prova manual de 2 maquinas.
         /// </summary>
-        static void CreateNetwork(GameObject prefabDaCaixa)
+        static void CreateNetwork(GameObject prefabDaCaixa, bool comSteam)
         {
             var go = new GameObject(NetworkName);
 
-            // O transporte entra ANTES do NetworkManager. Lido em TransportManager.cs:268:
-            // ele adiciona um Tugboat sozinho quando nao acha Transport nenhum no objeto —
-            // e ai o nosso, que conta bytes, seria ignorado. Adicionando primeiro, o
-            // TransportManager encontra este e nao cria outro.
-            go.AddComponent<ByteCountingTugboat>();
+            // UM transporte por cena, e ele entra ANTES do NetworkManager. Lido em
+            // TransportManager.cs:268: ele adiciona um Tugboat sozinho quando nao acha
+            // Transport nenhum no objeto — e ai o escolhido aqui seria ignorado.
+            if (comSteam)
+            {
+                ConfigurarSteam(go.AddComponent<FishySteamworks.FishySteamworks>());
+            }
+            else
+            {
+                go.AddComponent<ByteCountingTugboat>();
+            }
 
             var manager = go.AddComponent<FishNet.Managing.NetworkManager>();
 
