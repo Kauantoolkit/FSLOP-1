@@ -45,6 +45,12 @@ namespace Fslop.SpikeB.EditorTools
         /// </summary>
         const int CaixasNoMonte = 60;
 
+        /// <summary>
+        /// Raio do monte central. Ver a conta de ocupacao em CriarMonteDeCaixas: com 60
+        /// caixas de 1 u^2, abaixo de ~6 u elas nascem sobrepostas.
+        /// </summary>
+        const float RaioDoMonte = 7f;
+
         [MenuItem("FSLOP/Gerar cena do Jenga (brinquedo)")]
         public static void Build()
         {
@@ -104,8 +110,14 @@ namespace Fslop.SpikeB.EditorTools
             {
                 // Espiral de Fermat: distribui num disco sem aglomerar no centro, e e uma
                 // formula, nao um sorteio — entao nao muda entre sessoes.
+                //
+                // O RAIO E CONTA, nao gosto: area = pi*R^2, e cada caixa ocupa 1 u^2. Com
+                // R = 4.5 (a primeira versao) dava 63.6 u^2 para 60 caixas — 94% de
+                // ocupacao, ou seja, elas NASCERIAM interpenetradas e o PhysX as arremessaria
+                // no primeiro passo. Com R = 7 a area vai a 154 u^2 e o espacamento medio a
+                // sqrt(154/60) = 1.6 u, folgado para caixas de 1 u.
                 float t = i / (float)CaixasNoMonte;
-                float raio = 4.5f * Mathf.Sqrt(t);
+                float raio = RaioDoMonte * Mathf.Sqrt(t);
                 float ang = i * 2.39996323f;
 
                 var caixa = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -145,6 +157,17 @@ namespace Fslop.SpikeB.EditorTools
             var go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             go.name = "Player";
             go.transform.position = new Vector3(0f, 3f, -7f);
+
+            // Material SEM ATRITO, o mesmo do spike. Nao e detalhe: o CapsuleMotor controla
+            // a velocidade horizontal por inteiro, e o atrito do PhysX vira um SEGUNDO
+            // controlador no mesmo eixo. Medido em decisions/08: tira mu*g*dt =
+            // 0.6*9.81*0.02 = 0.1177 u/s da velocidade comandada a cada passo.
+            //
+            // A primeira versao desta cena esqueceu isto, e andar teria parecido arrastado
+            // — por um motivo ja medido e ja resolvido do outro lado do projeto. As CAIXAS
+            // continuam com atrito normal, que e o que permite empilhar.
+            go.GetComponent<CapsuleCollider>().sharedMaterial =
+                SpikeSceneBuilder.CreatePlayerMaterial();
 
             var corpo = go.AddComponent<Rigidbody>();
             corpo.mass = 70f;

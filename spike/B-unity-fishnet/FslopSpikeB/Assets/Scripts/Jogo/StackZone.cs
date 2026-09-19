@@ -49,7 +49,18 @@ namespace Fslop.SpikeB.Jogo
             empilhados = 0;
             altura = 0f;
 
-            foreach (var col in Physics.OverlapSphere(transform.position, radius))
+            // COLUNA, nao esfera. A primeira versao usava OverlapSphere(posicao, raio) com o
+            // centro no chao — o que deixa de fora tudo acima de `raio`. Numa zona de 3.5 u,
+            // uma torre de 4 u teria as caixas DO TOPO invisiveis para a medicao: justamente
+            // as que importam quando alguem puxa a de baixo.
+            //
+            // A zona e uma area no CHAO; o que esta acima dela pertence a ela, em qualquer
+            // altura. 20 u de meia-altura cobre qualquer pilha que a fisica aguente (o PhysX
+            // nao segura mais que ~6 camadas soltas, docs/99 item 11).
+            var centro = transform.position + Vector3.up * 20f;
+            var meia = new Vector3(radius, 20f, radius);
+
+            foreach (var col in Physics.OverlapBox(centro, meia))
             {
                 var corpo = col.attachedRigidbody;
                 if (corpo == null || corpo.GetComponent<CapsuleMotor>() != null)
@@ -57,7 +68,17 @@ namespace Fslop.SpikeB.Jogo
                     continue;
                 }
 
-                // OverlapSphere devolve um resultado por COLLIDER. Uma caixa com mais de um
+                // A caixa de overlap e QUADRADA e a marca no chao e REDONDA. Sem este filtro,
+                // um corpo no canto (ate raio*1.41) contaria estando visivelmente fora da
+                // area — o medido nao bateria com o visto, e quem joga confia no visto.
+                Vector3 d = corpo.worldCenterOfMass - transform.position;
+                d.y = 0f;
+                if (d.sqrMagnitude > radius * radius)
+                {
+                    continue;
+                }
+
+                // OverlapBox devolve um resultado por COLLIDER. Uma caixa com mais de um
                 // colisor seria contada duas vezes, e a contagem publicada estaria errada
                 // por um motivo invisivel.
                 if (dentro.Contains(corpo))

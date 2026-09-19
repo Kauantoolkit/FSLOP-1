@@ -284,7 +284,12 @@ namespace Fslop.SpikeB.EditorTools
         /// vencer o material de qualquer superficie — inclusive as 150 caixas da change
         /// 07, para a velocidade nao depender de em cima de qual caixa o jogador esta.
         /// </summary>
-        static PhysicsMaterial CreatePlayerMaterial()
+        /// <summary>
+        /// Publico para a cena do brinquedo usar o MESMO material. Os valores aqui vieram de
+        /// medicao (decisions/08); reescrever a mesma coisa noutro arquivo criaria duas
+        /// fontes para um numero medido, e elas divergem sem avisar.
+        /// </summary>
+        public static PhysicsMaterial CreatePlayerMaterial()
         {
             if (!AssetDatabase.IsValidFolder(PhysicsFolder))
             {
